@@ -244,3 +244,43 @@ test("links each PR to Pair Review details when its page is available", async ()
   );
   view.lifecycle.unmount();
 });
+
+test("offers a Generative UI chat view for ready briefings with a bundle", async () => {
+  const app = await loadPluginApp(() => import("../app"));
+  const bundle = `/Users/example/.pr-briefings/briefs/${"c".repeat(24)}/${pr.headSha}.genui`;
+  const snapshot = (genuiAvailable: boolean) => ({
+    queue: [pr],
+    briefings: [{ ...record, bundle }],
+    preferences: {
+      hostname: "github.com",
+      model: "openai/gpt-5",
+      thinking: "medium",
+      teams: "",
+      teammates: "",
+    },
+    pairReviewAvailable: false,
+    genuiAvailable,
+    refreshing: false,
+    warning: null,
+  });
+  const hidden = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: { snapshot: () => snapshot(false), refresh: () => ({ accepted: true }) },
+  });
+  expect(await hidden.findByText("Explain the behavior change")).toBeTruthy();
+  expect(hidden.queryByRole("button", { name: "Discuss in chat" })).toBeNull();
+  hidden.lifecycle.unmount();
+
+  const view = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: { snapshot: () => snapshot(true), refresh: () => ({ accepted: true }) },
+  });
+  fireEvent.click(await view.findByRole("button", { name: "Discuss in chat" }));
+  const call = view.inspection.navigateCalls.find(
+    (entry: { method: string }) => entry.method === "toCompose",
+  ) as { options: { initialPrompt: string; focusPrompt: boolean } } | undefined;
+  expect(call?.options.focusPrompt).toBe(true);
+  expect(call?.options.initialPrompt).toContain(
+    `cp -R '${bundle}/.' "$BB_THREAD_STORAGE/pr-briefings/${"c".repeat(24)}-${"b".repeat(12)}"/`,
+  );
+  expect(call?.options.initialPrompt).toContain("example/project #12");
+  view.lifecycle.unmount();
+});

@@ -128,6 +128,7 @@ test("queues and completes a briefing independently of Pair Review", async () =>
                 enabled: true,
                 app: { hasApp: true },
               },
+              { id: "genui", enabled: true, app: { hasApp: true } },
             ],
           }) as never,
       },
@@ -137,6 +138,7 @@ test("queues and completes a briefing independently of Pair Review", async () =>
         return {
           pr,
           file: "/Users/example/.pr-briefings/briefs/report.html",
+          bundle: "/Users/example/.pr-briefings/briefs/report.genui",
           generatedAt: 42,
         };
       if (method === "discover") return { prs: [pr] };
@@ -147,6 +149,7 @@ test("queues and completes a briefing independently of Pair Review", async () =>
   try {
     await expect(host.harness.behavior.callRpc("snapshot", null)).resolves.toMatchObject({
       pairReviewAvailable: true,
+      genuiAvailable: true,
     });
 
     const queued = await host.harness.behavior.callRpc("briefing_generate", {
@@ -173,6 +176,9 @@ test("queues and completes a briefing independently of Pair Review", async () =>
         head: "c".repeat(40),
       }),
     ).toMatchObject({ state: "ready", stale: true, hostId: "host-1" });
+    expect(
+      ((await host.harness.behavior.callRpc("snapshot", null)) as any).briefings[0],
+    ).toMatchObject({ bundle: "/Users/example/.pr-briefings/briefs/report.genui" });
     expect(
       host.harness.inspection.experimental_hostRpcCalls.find(
         (call) => call.method === "generate",

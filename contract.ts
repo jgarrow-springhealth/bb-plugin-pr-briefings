@@ -131,6 +131,8 @@ const briefingRecord = z
     head: sha.nullable(),
     state: z.enum(["queued", "generating", "ready", "failed"]),
     file: z.string().nullable(),
+    /** Generative UI chat bundle next to the report, when one was written. */
+    bundle: z.string().nullable(),
     hostId: z.string().nullable(),
     error: z.string().nullable(),
     updatedAt: z.number().int().nonnegative(),
@@ -166,7 +168,12 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: z
-      .object({ pr: PullRequest, file: z.string(), generatedAt: z.number() })
+      .object({
+        pr: PullRequest,
+        file: z.string(),
+        bundle: z.string().nullable().default(null),
+        generatedAt: z.number(),
+      })
       .strict(),
   },
 });
@@ -182,6 +189,7 @@ export const rpcContract = defineRpcContract({
         briefings: z.array(briefingRecord).max(500),
         preferences: Preferences,
         pairReviewAvailable: z.boolean(),
+        genuiAvailable: z.boolean(),
         refreshing: z.boolean(),
         warning: z.string().nullable(),
       })

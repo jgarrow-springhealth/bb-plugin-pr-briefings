@@ -5,10 +5,16 @@
 - Explicit generation from a discovered PR or canonical GitHub pull-request URL using Pi, Claude Code, or Codex.
 - Queued, generating, ready, outdated, and failed states tied to the exact PR head.
 - Self-contained reports opened in BB's host file preview, with source-linked evidence, before/after behavior, an impact map, flows, boundaries, and considerations.
+- Reports separate what was verified from what the model only claims.
+  - Citations are checked against the real base or head code and re-anchored.
+  - CI checks are read from GitHub.
+  - Changed images and inline SVG are shown before and after.
+  - Where the change lands is charted, and the impact map is drawn as a graph.
+- An optional **Discuss in chat** view renders the same briefing as interactive components when the Generative UI plugin is enabled.
 - `bb pr-briefings status` and `bb pr-briefings generate <URL>` commands.
 - Optional links to Pair Review details when that separate plugin is enabled.
 
-Opening the page or viewing a pull request never starts generation. Pair Review is optional.
+Opening the page or viewing a pull request never starts generation. Pair Review and Generative UI are optional.
 
 ## Typical workflow
 

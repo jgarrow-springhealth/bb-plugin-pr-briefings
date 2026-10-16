@@ -12,6 +12,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import type { rpcContract } from "./server";
 import type { BriefingRecord, PullRequest, Preferences } from "./contract";
+import { genuiChatPrompt } from "./genui-chat";
 import "./app.css";
 
 type Snapshot = {
@@ -19,6 +20,7 @@ type Snapshot = {
   briefings: BriefingRecord[];
   preferences: Preferences;
   pairReviewAvailable: boolean;
+  genuiAvailable: boolean;
   refreshing: boolean;
   warning: string | null;
 };
@@ -112,6 +114,7 @@ function BriefingRow({
   busy,
   onGenerate,
   onOpen,
+  onChat,
   onPullRequest,
   pairReviewHref,
   requestLabel,
@@ -122,6 +125,8 @@ function BriefingRow({
   requestLabel?: string;
   onGenerate: () => void;
   onOpen: () => void;
+  /** Present when the Generative UI plugin can show this briefing in chat. */
+  onChat?: () => void;
   onPullRequest: () => void;
   pairReviewHref?: string;
 }) {
@@ -152,6 +157,12 @@ function BriefingRow({
           <Button size="sm" onClick={onOpen}>
             <Icon name="FileText" className="size-4" />
             Open briefing
+          </Button>
+        )}
+        {record?.state === "ready" && !stale && onChat && (
+          <Button size="sm" variant="outline" onClick={onChat}>
+            <Icon name="MessageSquare" className="size-4" />
+            Discuss in chat
           </Button>
         )}
         <Button
@@ -340,6 +351,23 @@ function BriefingsPage(_props: PluginNavPanelProps) {
     });
     if (!accepted) setActionError("BB could not open this briefing preview.");
   };
+  const chatFor = (record?: BriefingRecord) =>
+    data?.genuiAvailable && record?.bundle && record.head
+      ? () => {
+          try {
+            navigate.toCompose({
+              initialPrompt: genuiChatPrompt({
+                subject: record.subject || record.url,
+                head: record.head!,
+                bundle: record.bundle!,
+              }),
+              focusPrompt: true,
+            });
+          } catch (cause) {
+            setActionError(String(cause));
+          }
+        }
+      : undefined;
   return (
     <main className="pb-page">
       <div className="pb-shell">
@@ -509,6 +537,7 @@ function BriefingsPage(_props: PluginNavPanelProps) {
                     busy={busyUrl === pr.url}
                     onGenerate={() => void generate(pr.url)}
                     onOpen={() => record && open(record)}
+                    onChat={chatFor(record)}
                     onPullRequest={() => navigate.openUrl(pr.url)}
                     pairReviewHref={
                       data.pairReviewAvailable
@@ -571,6 +600,7 @@ function BriefingsPage(_props: PluginNavPanelProps) {
                     busy={busyUrl === record.url}
                     onGenerate={() => void generate(record.url)}
                     onOpen={() => open(record)}
+                    onChat={chatFor(record)}
                     onPullRequest={() => navigate.openUrl(record.url)}
                     pairReviewHref={
                       data?.pairReviewAvailable

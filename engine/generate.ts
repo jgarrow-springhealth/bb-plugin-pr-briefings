@@ -32,7 +32,19 @@ import { extractBriefingHtml } from "./briefing-html.ts";
 import {
   parseBriefingDocument,
   renderBriefingHtml,
+  type BriefingDocument,
 } from "./briefing-template.ts";
+import { buildGenuiBundle, writeGenuiBundle } from "./briefing-genui.ts";
+import { genuiBundleName } from "../genui-chat.ts";
+import {
+  buildFacts,
+  normalizeCheckRuns,
+  parseUnifiedDiff,
+  type BinaryReader,
+  type CheckRun,
+  type Side,
+  type SourceReader,
+} from "./facts.ts";
 import {
   createReadOnlyWorkspace,
   runBriefingCli,
@@ -299,6 +311,9 @@ class SourceGuard {
   read(path: string) {
     return readFileSync(this.path(path), "utf8");
   }
+  readBytes(path: string) {
+    return readFileSync(this.path(path));
+  }
   list(input = "") {
     const path = resolve(this.root, input);
     const rel = relative(this.root, path);
@@ -344,11 +359,22 @@ behavior comparison must cite repository-relative evidence. Include no more
 than 4 evidence entries for each summary claim, no more than 4 for each side of
 the behavior comparison, and no more than 8 for each impact or consideration.
 
+Every evidence entry should include "quote": a short exact excerpt (at most 120
+characters) copied from the cited line. The coordinator checks each quote
+against the real files and re-anchors the line, so copy the text exactly and
+keep it to one line. Before-evidence describes the base commit; all other
+evidence describes the briefed head.
+
+Give each impact a short lowercase "id" slug and list in "dependsOn" the ids of
+impacts it is reached through or depends on (for example, consumers depend on
+the shared module they call). These edges draw the impact graph; use [] when an
+impact is independent.
+
 {
   "verdict": "one plain-language sentence",
-  "summary": [{"kind":"behavior|surface|scope|compatibility","claim":"one concrete point","evidence":[{"path":"relative/file","line":123,"note":"what this proves"}]}],
-  "behavior": {"before":"prior behavior","beforeEvidence":[{"path":"relative/file","line":123,"note":"support"}],"after":"new behavior","afterEvidence":[{"path":"relative/file","line":123,"note":"support"}]},
-  "impacts": [{"name":"surface or component","kind":"product surface|service|package|data|team|operations","changed":true,"change":"what changes here","evidence":[]}],
+  "summary": [{"kind":"behavior|surface|scope|compatibility","claim":"one concrete point","evidence":[{"path":"relative/file","line":123,"quote":"exact text from that line","note":"what this proves"}]}],
+  "behavior": {"before":"prior behavior","beforeEvidence":[{"path":"relative/file","line":123,"quote":"exact text","note":"support"}],"after":"new behavior","afterEvidence":[{"path":"relative/file","line":123,"quote":"exact text","note":"support"}]},
+  "impacts": [{"id":"short-slug","dependsOn":["other-slug"],"name":"surface or component","kind":"product surface|service|package|data|team|operations","changed":true,"change":"what changes here","evidence":[]}],
   "flows": [{"title":"flow name","steps":[{"label":"short step","detail":"what happens","changed":false}]}],
   "boundaries": {"inScope":["included behavior"],"outOfScope":["excluded behavior"],"unchanged":["important invariant"]},
   "considerations": [{"level":"note|watch|risk","title":"short label","detail":"high-level risk or open question","evidence":[]}]
@@ -475,6 +501,124 @@ async function runBriefingAgent(options: {
   }
 }
 
+const MAX_SOURCE_PATHS = 80;
+const MAX_GIT_BLOB = 1024 * 1024;
+const IMAGE_FILE = /\.(svg|png|jpe?g|gif|webp)$/i;
+
+/** Reads `sha:path` from the checkout's object store as bytes, or null. */
+async function gitBlob(
+  checkout: string,
+  sha: string,
+  path: string,
+  signal: AbortSignal,
+): Promise<Buffer | null> {
+  signal.throwIfAborted();
+  return new Promise((resolveBlob) => {
+    const child = spawn("git", ["-C", checkout, "show", `${sha}:${path}`], {
+      env: process.env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    const timer = setTimeout(() => child.kill("SIGTERM"), 60_000);
+    child.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_GIT_BLOB) child.kill("SIGTERM");
+      else chunks.push(chunk);
+    });
+    child.on("error", () => resolveBlob(null));
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolveBlob(code === 0 && bytes <= MAX_GIT_BLOB ? Buffer.concat(chunks) : null);
+    });
+  });
+}
+
+/**
+ * Preloads every file the facts need — cited paths on both sides and changed
+ * images — so resolution can run synchronously. Head files come from the
+ * guarded checkout; base files from the base commit's objects. Both reads are
+ * done by the coordinator, never the model.
+ */
+async function loadSources(options: {
+  checkout: string;
+  pr: PullRequestType;
+  document: BriefingDocument;
+  diff: string;
+  signal: AbortSignal;
+}): Promise<SourceReader & BinaryReader> {
+  const { checkout, pr, document, signal } = options;
+  const cited = [
+    ...document.summary.flatMap((item) => item.evidence),
+    ...document.behavior.beforeEvidence,
+    ...document.behavior.afterEvidence,
+    ...document.impacts.flatMap((item) => item.evidence),
+    ...document.considerations.flatMap((item) => item.evidence),
+  ].map((item) => item.path);
+  const images = parseUnifiedDiff(options.diff)
+    .filter((file) => IMAGE_FILE.test(file.path))
+    .flatMap((file) => [file.path, ...(file.oldPath ? [file.oldPath] : [])]);
+  const paths = [...new Set([...cited, ...images])].slice(0, MAX_SOURCE_PATHS);
+  let baseAvailable = true;
+  try {
+    await command(
+      "git",
+      ["-C", checkout, "fetch", "--depth=1", "--filter=blob:none", "origin", pr.baseSha],
+      { signal, timeoutMs: 5 * 60_000 },
+    );
+  } catch {
+    baseAvailable = false;
+  }
+  const guard = new SourceGuard(checkout);
+  const files = new Map<string, Buffer | null>();
+  for (const path of paths) {
+    try {
+      files.set(`head\0${path}`, guard.readBytes(path));
+    } catch {
+      files.set(`head\0${path}`, null);
+    }
+  }
+  if (baseAvailable)
+    await mapConcurrent(paths, 4, async (path) => {
+      files.set(`base\0${path}`, await gitBlob(checkout, pr.baseSha, path, signal));
+    });
+  const bytes = (side: Side, path: string) => files.get(`${side}\0${path}`) ?? null;
+  return {
+    read: (side, path) => {
+      const value = bytes(side, path);
+      return value && value.length <= 256 * 1024 ? value.toString("utf8") : null;
+    },
+    readBytes: bytes,
+  };
+}
+
+/** GitHub check runs for the briefed head; null when they cannot be read. */
+async function loadCheckRuns(
+  pr: PullRequestType,
+  signal: AbortSignal,
+): Promise<CheckRun[] | null> {
+  try {
+    return normalizeCheckRuns(
+      JSON.parse(
+        await command(
+          "gh",
+          [
+            "api",
+            "--hostname",
+            pr.host,
+            "--method",
+            "GET",
+            `repos/${pr.owner}/${pr.repo}/commits/${pr.headSha}/check-runs?per_page=100`,
+          ],
+          { signal, timeoutMs: 60_000 },
+        ),
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function generateBriefing(options: {
   url: string;
   hostname: string;
@@ -558,13 +702,18 @@ export async function generateBriefing(options: {
       signal: options.signal,
     });
     const document = parseBriefingDocument(output);
+    const model = `${options.provider}:${options.model}`;
+    const sources = await loadSources({
+      checkout,
+      pr,
+      document,
+      diff,
+      signal: options.signal,
+    });
+    const checks = await loadCheckRuns(pr, options.signal);
+    const facts = buildFacts({ pr, document, diff, sources, checks });
     const html = extractBriefingHtml(
-      renderBriefingHtml({
-        pr,
-        generationId,
-        model: `${options.provider}:${options.model}`,
-        document,
-      }),
+      renderBriefingHtml({ pr, generationId, model, document, facts }),
     );
     options.signal.throwIfAborted();
     const key = createHash("sha256").update(pr.url).digest("hex").slice(0, 24);
@@ -575,7 +724,24 @@ export async function generateBriefing(options: {
     chmodSync(temporary, 0o600);
     const { renameSync } = await import("node:fs");
     renameSync(temporary, file);
-    return { pr, file, generatedAt: Date.now() };
+    // The chat view is optional: a failure here never fails the briefing.
+    let bundle: string | null = join(root, "briefs", key, `${pr.headSha}.genui`);
+    try {
+      writeGenuiBundle(
+        bundle,
+        buildGenuiBundle({
+          pr,
+          generationId,
+          model,
+          facts,
+          name: genuiBundleName(key, pr.headSha),
+          sources,
+        }),
+      );
+    } catch {
+      bundle = null;
+    }
+    return { pr, file, bundle, generatedAt: Date.now() };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

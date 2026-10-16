@@ -83,6 +83,7 @@ export default function plugin(bb: BbPluginApi) {
   bb.storage.migrate(db, [
     `CREATE TABLE briefings (url TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', head TEXT, state TEXT NOT NULL, file TEXT, hostId TEXT, error TEXT, updatedAt INTEGER NOT NULL)`,
     `CREATE TABLE cache (key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+    `ALTER TABLE briefings ADD COLUMN bundle TEXT`,
   ]);
   db.prepare(
     "UPDATE briefings SET state='queued' WHERE state='generating'",
@@ -91,27 +92,29 @@ export default function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract });
   let refreshing = false;
   let warning: string | null = null;
-  let pairReviewCache = { available: false, checkedAt: 0 };
+  let pluginCache = { pairReview: false, genui: false, checkedAt: 0 };
   const changed = () => bb.realtime.publish("changed", {});
   const preferences = async () => Preferences.parse(await settings.get());
-  const pairReviewAvailable = async () => {
+  /** Optional companion plugins: Pair Review links and Generative UI chat views. */
+  const companions = async () => {
     const now = Date.now();
-    if (now - pairReviewCache.checkedAt < 15_000)
-      return pairReviewCache.available;
-    let available = false;
+    if (now - pluginCache.checkedAt < 15_000) return pluginCache;
+    let pairReview = false;
+    let genui = false;
     try {
       const { plugins } = await bb.sdk.plugins.list();
-      available = plugins.some(
-        (candidate) =>
-          candidate.id === "pair-review" &&
-          candidate.enabled &&
-          candidate.app.hasApp,
-      );
+      const enabledApp = (id: string) =>
+        plugins.some(
+          (candidate) =>
+            candidate.id === id && candidate.enabled && candidate.app.hasApp,
+        );
+      pairReview = enabledApp("pair-review");
+      genui = enabledApp("genui");
     } catch {
       // Keep PR Briefings independent when plugin discovery is unavailable.
     }
-    pairReviewCache = { available, checkedAt: now };
-    return available;
+    pluginCache = { pairReview, genui, checkedAt: now };
+    return pluginCache;
   };
   const primaryHost = async () => {
     const hostId = (await bb.sdk.system.config()).primaryHostId;
@@ -132,7 +135,7 @@ export default function plugin(bb: BbPluginApi) {
   const records = () =>
     db
       .prepare(
-        "SELECT url,title,subject,author,head,state,file,hostId,error,updatedAt FROM briefings ORDER BY updatedAt DESC LIMIT 500",
+        "SELECT url,title,subject,author,head,state,file,bundle,hostId,error,updatedAt FROM briefings ORDER BY updatedAt DESC LIMIT 500",
       )
       .all() as BriefingRecord[];
   const statusFor = (url: string, requestedHead?: string) => {
@@ -233,13 +236,14 @@ export default function plugin(bb: BbPluginApi) {
           );
           const pr = result.pr;
           db.prepare(
-            `UPDATE briefings SET title=?,subject=?,author=?,head=?,state='ready',file=?,hostId=?,error=NULL,updatedAt=? WHERE url=?`,
+            `UPDATE briefings SET title=?,subject=?,author=?,head=?,state='ready',file=?,bundle=?,hostId=?,error=NULL,updatedAt=? WHERE url=?`,
           ).run(
             pr.title,
             `${pr.owner}/${pr.repo} #${pr.number}`,
             pr.author,
             pr.headSha,
             result.file,
+            result.bundle,
             hostId,
             result.generatedAt,
             job.url,
@@ -266,7 +270,8 @@ export default function plugin(bb: BbPluginApi) {
       queue: cachedQueue(),
       briefings: records(),
       preferences: await preferences(),
-      pairReviewAvailable: await pairReviewAvailable(),
+      pairReviewAvailable: (await companions()).pairReview,
+      genuiAvailable: (await companions()).genui,
       refreshing,
       warning,
     }),
