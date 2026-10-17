@@ -197,7 +197,7 @@ function normalizeEvidenceCardinality(value: unknown) {
     ...document,
     summary,
     behavior,
-    impacts: singleChanged(normalizeEight(document.impacts)),
+    impacts: singleChanged(normalizeEight(completeImpacts(document.impacts))),
     flows: Array.isArray(document.flows)
       ? document.flows.map((flow) =>
           flow && typeof flow === "object" && !Array.isArray(flow)
@@ -210,6 +210,27 @@ function normalizeEvidenceCardinality(value: unknown) {
       : document.flows,
     considerations: normalizeEight(document.considerations),
   };
+}
+
+/**
+ * Models sometimes leave "changed"/"change" off impacts they don't consider the
+ * change itself, or name the description differently. Fill those in instead of
+ * failing the whole briefing; anything else still has to validate.
+ */
+function completeImpacts(items: unknown) {
+  if (!Array.isArray(items)) return items;
+  return items.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const record = { ...(item as Record<string, unknown>) };
+    if (record.changed === undefined) record.changed = false;
+    if (record.change === undefined) {
+      const alternate = ["description", "detail", "summary", "effect", "impact"].find((key) => typeof record[key] === "string" && (record[key] as string).trim());
+      if (alternate) record.change = record[alternate];
+      else if (typeof record.relation === "string" && record.relation.trim()) record.change = record.relation;
+    }
+    for (const key of ["description", "detail", "summary", "effect", "impact"]) delete record[key];
+    return record;
+  });
 }
 
 /**

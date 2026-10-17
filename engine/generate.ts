@@ -371,7 +371,9 @@ against the real files and re-anchors the line, so copy the text exactly and
 keep it to one line. Before-evidence describes the base commit; all other
 evidence describes the briefed head.
 
-Give each impact a short lowercase "id" slug and list in "dependsOn" the ids of
+Every impact needs all of its fields, including "changed" (true only for the
+one part this PR changes directly, false for the rest) and "change" (what this
+PR changes or means for that part). Give each impact a short lowercase "id" slug and list in "dependsOn" the ids of
 impacts it is reached through or depends on (for example, consumers depend on
 the shared module they call). These edges draw the impact graph; use [] when an
 impact is independent. "relation" is a 2-5 word label for that link, such as
@@ -831,7 +833,19 @@ export async function generateBriefing(options: {
         }
       },
     });
-    const document = parseBriefingDocument(output);
+    let document: BriefingDocument;
+    try {
+      document = parseBriefingDocument(output);
+    } catch (error) {
+      // Keep the invalid output privately for diagnosis, then fail as before.
+      const key = createHash("sha256").update(pr.url).digest("hex").slice(0, 24);
+      const debug = join(root, "briefs", key, `${pr.headSha}.invalid.txt`);
+      try {
+        mkdirSync(dirname(debug), { recursive: true, mode: 0o700 });
+        writeFileSync(debug, `${error instanceof Error ? error.message : String(error)}\n\n${output}`, { encoding: "utf8", mode: 0o600 });
+      } catch {}
+      throw error;
+    }
     const model = `${options.provider}:${options.model}`;
     const sources = await loadSources({
       checkout,

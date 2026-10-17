@@ -210,8 +210,9 @@ test("renders verification, charts, graph, visuals, and base-linked evidence as 
   );
   expect(html).toContain(`/blob/${"a".repeat(40)}/src/fallback.ts#L2`);
   expect(html).toContain("model cited line 1");
-  expect(html).toContain("What this tab is for");
   expect(html).toContain("Checked automatically");
+  expect(html).toContain("Claims to confirm while you review");
+  expect(html).toContain('id="impact-1-open" checked');
   expect(html).toContain('aria-label="Lines added and removed by area"');
   expect(html).toContain('aria-label="Impact graph"');
   expect(html).toContain('src="data:image/svg+xml;base64,');
@@ -269,4 +270,36 @@ test("asks once for corrected JSON with bounded validation errors", async () => 
   expect(request).toContain("impacts.1.changed: expected boolean");
   expect(request).toContain("return the complete corrected JSON object only");
   expect(request.length).toBeLessThan(4300);
+});
+
+test("lists risks as filterable rows with how-to-check details", () => {
+  const withRisks = {
+    ...document,
+    considerations: [
+      { level: "risk" as const, title: "Breaks ordering", detail: "Load first.", check: "Open pr.html.", evidence: [] },
+      { level: "note" as const, title: "Naming", detail: "Minor.", evidence: [] },
+    ],
+  };
+  const html = renderBriefingHtml({ pr, generationId: "g", model: "m", document: withRisks });
+  expect(html).toContain('id="rf-risk"');
+  expect(html).toContain('id="rf-note"');
+  expect(html).not.toContain('id="rf-watch"');
+  expect(html).toContain("<b>How to check:</b> Open pr.html.");
+  expect(html).toContain('class="xrow rrow sev-row-risk" id="risk-1"');
+});
+
+test("fills impacts that omit changed/change instead of failing", () => {
+  const partial = structuredClone(document) as any;
+  partial.impacts = [
+    partial.impacts[0],
+    { id: "page", name: "Page", kind: "service", description: "Uses the new view", evidence: [] },
+    { id: "tests", name: "Tests", kind: "team", relation: "covers the view", evidence: [] },
+  ];
+  const parsed = parseBriefingDocument(JSON.stringify(partial));
+  expect(parsed.impacts.map((item) => [item.changed, item.change])).toEqual([
+    [true, "Structured content appears."],
+    [false, "Uses the new view"],
+    [false, "covers the view"],
+  ]);
+  expect("description" in parsed.impacts[1]!).toBe(false);
 });

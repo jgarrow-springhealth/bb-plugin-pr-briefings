@@ -319,6 +319,13 @@ test("shows a briefing in the page and relays its links to BB's opener", async (
   expect(JSON.stringify(opened)).toContain("https://github.com/x");
   expect(JSON.stringify(opened)).not.toContain("evil.example");
   expect(JSON.stringify(opened)).not.toContain("javascript:");
+  // Shortcut chords pressed inside the report are replayed on the frame for BB.
+  const seen: KeyboardEvent[] = [];
+  frame.addEventListener("keydown", (event) => seen.push(event));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:key", key: "j", code: "KeyJ", metaKey: true, shiftKey: true }, source: frame.contentWindow }));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:key", key: "j", code: "KeyJ", metaKey: true }, source: window }));
+  expect(seen.map((event) => [event.key, event.metaKey, event.shiftKey, event.bubbles])).toEqual([["j", true, true, true]]);
+  expect(withLinkBridge("<body></body>")).toContain("pr-briefings:key");
   fireEvent.click(view.getByRole("button", { name: "Pull request" }));
   expect(JSON.stringify(view.inspection.navigateCalls)).toContain(url);
   view.lifecycle.unmount();

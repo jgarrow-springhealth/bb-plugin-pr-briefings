@@ -232,9 +232,11 @@ function ManualBriefing({
 /**
  * Injected only into the in-app viewer's copy of a report (the report file
  * itself stays script-free). The frame is sandboxed without same-origin, so
- * this script can do nothing but ask the page to open an https link.
+ * this script can only: ask the page to open an https link, replay modifier
+ * key chords so BB shortcuts keep working, and handle in-page "#id" links
+ * (which would otherwise navigate a srcdoc frame away from the report).
  */
-const LINK_BRIDGE = `<script>document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(/^https:\\/\\//i.test(h)){e.preventDefault();parent.postMessage({type:"pr-briefings:open-url",href:h},"*")}},true)</script>`;
+const LINK_BRIDGE = `<script>document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#"){e.preventDefault();var t=document.getElementById(h.slice(1));if(t){var c=t.querySelector(".xtoggle");if(c)c.checked=true;t.scrollIntoView({block:"center",behavior:"smooth"});t.classList.add("flash");setTimeout(function(){t.classList.remove("flash")},1400)}return}if(/^https:\\/\\//i.test(h)){e.preventDefault();parent.postMessage({type:"pr-briefings:open-url",href:h},"*")}},true);document.addEventListener("keydown",function(e){if(!(e.metaKey||e.ctrlKey||e.altKey))return;if(!e.shiftKey&&!e.altKey&&/^[acvxzy]$/i.test(e.key))return;parent.postMessage({type:"pr-briefings:key",key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,altKey:e.altKey,shiftKey:e.shiftKey},"*")},true)</script>`;
 
 export function withLinkBridge(html: string) {
   const at = html.toLowerCase().lastIndexOf("</body>");
@@ -297,6 +299,25 @@ function BriefingViewer({ url }: { url: string }) {
     const onMessage = (event: MessageEvent) => {
       if (!frame.current || event.source !== frame.current.contentWindow) return;
       const data = event.data as { type?: unknown; href?: unknown } | null;
+      if (data?.type === "pr-briefings:key") {
+        // Focus inside the report frame hides BB's shortcuts from the page, so
+        // modifier chords are replayed on the frame element and bubble to BB.
+        const key = data as unknown as Record<string, unknown>;
+        if (typeof key.key !== "string" || typeof key.code !== "string") return;
+        frame.current.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: key.key.slice(0, 32),
+            code: key.code.slice(0, 32),
+            metaKey: key.metaKey === true,
+            ctrlKey: key.ctrlKey === true,
+            altKey: key.altKey === true,
+            shiftKey: key.shiftKey === true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        return;
+      }
       if (data?.type !== "pr-briefings:open-url" || typeof data.href !== "string") return;
       if (/^https:\/\//i.test(data.href) && data.href.length <= 4096) navigate.openUrl(data.href);
     };

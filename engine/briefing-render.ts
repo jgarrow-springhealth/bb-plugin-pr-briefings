@@ -249,7 +249,7 @@ function impactSketch(document: ResolvedDocument, graph: ImpactGraph) {
         .join("")}</a></g>`;
     })
     .join("");
-  return `<figure class="sketch-figure"><svg class="sketch" viewBox="0 0 ${width} ${height}" style="max-width:${width}px" role="img" aria-label="Impact graph">${edges}${nodes}</svg><figcaption class="legend">${swatch("yellow")}Changed by this PR ${swatch("blue")}Affected by the change ${graph.nodes.some((node) => !linked.has(node.id)) ? `${swatch("gray")}Not linked ` : ""}<span class="muted">· Select a box to jump to its details.</span></figcaption></figure>`;
+  return `<figure class="sketch-figure"><svg class="sketch" viewBox="0 0 ${width} ${height}" style="max-width:${width}px;min-width:${Math.min(width, Math.round(width * 0.7))}px" role="img" aria-label="Impact graph">${edges}${nodes}</svg><figcaption class="legend">${swatch("yellow")}Changed by this PR ${swatch("blue")}Affected by the change ${graph.nodes.some((node) => !linked.has(node.id)) ? `${swatch("gray")}Not linked ` : ""}<span class="muted">· Select a box to jump to its details.</span></figcaption></figure>`;
 }
 const swatch = (color: SketchColor) => `<svg class="swatch" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" class="sk-solid ${color} sk-swatch"/></svg>`;
 
@@ -413,14 +413,16 @@ function impactAndFlow(document: ResolvedDocument) {
   const graph = impactGraph(document.impacts);
   const changed = document.impacts.filter((item) => item.changed).length;
   const linked = new Set(graph?.edges.flatMap((edge) => [edge.from, edge.to]) ?? []);
-  const cards = document.impacts
-    .map((item, index) => {
-      const id = item.id ?? `impact-${index + 1}`;
-      const role = item.changed ? badge("Changed by this PR", "warn") : linked.has(id) ? badge("Affected", "info") : badge("Related");
-      const shown = item.evidence.slice(0, 3);
-      return `<article class="impact" id="impact-${index + 1}"><div class="impact-head">${role}<span class="muted">${esc(item.kind)}</span></div><h4>${esc(item.name)}</h4><p>${esc(item.change)}</p>${dependsLine(document, item)}${shown.length ? `${evidenceLinks(shown)}${item.evidence.length > shown.length ? `<p class="muted">+${item.evidence.length - shown.length} more in Evidence</p>` : ""}` : ""}</article>`;
-    })
-    .join("");
+  // Compact, expandable rows instead of tall cards. A box in the diagram links
+  // to its row; :target opens it without scripts.
+  const row = (item: ResolvedDocument["impacts"][number], index: number) => {
+    const id = item.id ?? `impact-${index + 1}`;
+    const role = item.changed ? "changed" : linked.has(id) ? "affected" : "related";
+    const roleWord = role === "changed" ? "Changed by this PR" : role === "affected" ? "Affected" : "Related";
+    const count = item.evidence.length;
+    return `<div class="xrow role-${role}" id="impact-${index + 1}"><input class="xtoggle" type="checkbox" id="impact-${index + 1}-open"${item.changed ? " checked" : ""}><label class="xhead" for="impact-${index + 1}-open">${icon("chevron", "chev")}<span class="role-dot"></span><span class="xtitle"><b>${esc(item.name)}</b><span class="xsum">${esc(item.change)}</span></span><span class="xmeta">${esc(roleWord)} · ${esc(item.kind)}${count ? ` · ${plural(count, "source")}` : ""}</span></label><div class="xbody"><p>${esc(item.change)}</p>${dependsLine(document, item)}${evidenceLinks(item.evidence)}</div></div>`;
+  };
+  const cards = document.impacts.map(row).join("");
   const flows = document.flows.length
     ? document.flows
         .map(
@@ -431,37 +433,62 @@ function impactAndFlow(document: ResolvedDocument) {
         )
         .join("")
     : `<p class="muted">This PR doesn't change how requests or data move through the system.</p>`;
-  return `<p class="muted">Who is affected by the change, and how information moves through it.</p><h3 class="sec">What this touches</h3><p>${changed ? `${plural(changed, "part")} changed directly` : "No single part is marked as the change"}${graph ? `; ${plural(linked.size - changed, "part")} depend on it` : ""}.</p>${graph ? impactSketch(document, graph) : ""}<div class="impacts">${cards}</div><h3 class="sec">How it flows</h3>${flows}`;
+  return `<p class="muted">Who is affected by the change, and how information moves through it.</p><h3 class="sec">What this touches</h3><p>${changed ? `${plural(changed, "part")} changed directly` : "No single part is marked as the change"}${graph ? `; ${plural(linked.size - changed, "part")} depend on it` : ""}.</p>${graph ? impactSketch(document, graph) : ""}<div class="xlist">${cards}</div><h3 class="sec">How it flows</h3>${flows}`;
 }
 
-const ACCEPT_WORD: Record<AcceptanceRow["status"], string> = { passed: "Checked", failed: "Failed", untested: "Needs you", claimed: "Model's claim" };
-function acceptRow(row: AcceptanceRow, extra = "") {
-  return `<li class="row">${icon(row.status, `s-${row.status}`)}<span class="row-main"><b>${esc(row.name)}</b>${row.note ? `<span class="muted">${esc(row.note)}</span>` : ""}${row.needs ? `<span class="t-warn">${esc(row.needs)}</span>` : ""}${extra}</span><span class="row-side"><b class="st-${row.status}">${ACCEPT_WORD[row.status]}</b><span class="muted">by ${esc(row.by)}</span></span></li>`;
-}
 function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: ResolvedEvidence[]) {
+  const counts = evidenceCounts(references);
+  // The "N citations without a quote" row is part of the citation check, not a separate claim.
+  const isCitationGap = (row: AcceptanceRow) => / without a quote$/.test(row.name);
   const checked = rows.filter((row) => row.status === "passed" || row.status === "failed");
   const needs = rows.filter((row) => row.status === "untested");
-  const claims = rows.filter((row) => row.status === "claimed");
-  const count = (status: AcceptanceRow["status"]) => rows.filter((row) => row.status === status).length;
-  const segments = (["passed", "failed", "untested", "claimed"] as const)
-    .filter((status) => count(status))
-    .map((status) => `<span class="seg seg-${status}" style="flex:${count(status)}" title="${ACCEPT_WORD[status]}: ${count(status)}"></span>`)
-    .join("");
+  const claims = rows.filter((row) => row.status === "claimed" && !isCitationGap(row));
+  const failed = checked.filter((row) => row.status === "failed").length;
   const missing = references.filter((item) => item.status === "unresolved");
-  const missingList = missing.length
-    ? `<details class="disclosure inline"><summary>${icon("chevron", "chev")}Show the ${plural(missing.length, "citation")} not found</summary><div class="disclosure-body">${evidenceLinks(missing)}</div></details>`
-    : "";
-  const section = (title: string, hint: string, list: AcceptanceRow[]) =>
-    list.length ? `<h3 class="sec">${title} <span class="muted">· ${list.length}</span></h3><p class="muted">${hint}</p><ul class="list accept">${list.map((row) => acceptRow(row, row.name === "Quoted citations match the code" ? missingList : "")).join("")}</ul>` : "";
-  return `${intro("What this tab is for", "An AI model wrote this briefing. PR Briefings double-checked some of it on its own, against the real code and GitHub. The rest is only the model's word, so it's listed here as things to confirm while you review.")}<p class="summary-line"><b>${checked.filter((row) => row.status === "passed").length}</b> checked${count("failed") ? ` · <b class="t-bad">${count("failed")}</b> failed` : ""} · <b>${needs.length}</b> need you · <b>${claims.length}</b> to confirm yourself</p><div class="segbar">${segments}</div><p class="key">${icon("passed", "s-passed")}<b>Checked</b> PR Briefings confirmed it ${icon("failed", "s-failed")}<b>Failed</b> a check disagreed ${icon("untested", "s-untested")}<b>Needs you</b> only a person can confirm it ${icon("claimed", "s-claimed")}<b>Model's claim</b> not checked</p>${section(
+  const checkSentence = (row: AcceptanceRow) => {
+    if (row.name === "Quoted citations match the code") {
+      const quoted = counts.resolved + counts.unresolved;
+      const lead = !quoted ? "No citation carried a quote to check." : counts.unresolved ? `${counts.resolved} of ${quoted} quoted citations were found in the code; ${counts.unresolved} were not.` : `All ${quoted} quoted citations were found in the code they point to.`;
+      return `${lead}${counts.unverified ? ` ${plural(counts.unverified, "citation")} had no quote, so ${counts.unverified === 1 ? "it wasn't" : "they weren't"} checked.` : ""}`;
+    }
+    return row.note ?? "";
+  };
+  const tile = (id: string, tone: string, value: string, label: string, hint: string) =>
+    `<a class="vtile tone-${tone}" href="#${id}"><b>${value}</b><span class="vtile-label">${label}</span><span class="muted">${hint}</span></a>`;
+  const checkRows = checked
+    .map(
+      (row) =>
+        `<li class="vcheck">${icon(row.status, `s-${row.status}`)}<div><b>${esc(row.name)}</b><p>${esc(checkSentence(row))}</p>${row.name === "Quoted citations match the code" && missing.length ? `<details class="disclosure inline"><summary>${icon("chevron", "chev")}Show the ${plural(missing.length, "citation")} not found</summary><div class="disclosure-body">${evidenceLinks(missing)}</div></details>` : ""}</div><span class="vby">${esc(row.by)}</span></li>`,
+    )
+    .join("");
+  const todo = (list: AcceptanceRow[], prefix: string) =>
+    list
+      .map(
+        (row, index) =>
+          `<li><input type="checkbox" id="${prefix}-${index}"><label for="${prefix}-${index}"><span class="box">${icon("check")}</span><span><b>${esc(row.name)}</b>${row.needs ? `<span class="muted">${esc(row.needs)}</span>` : ""}</span></label></li>`,
+      )
+      .join("");
+  return `<p class="lede">An AI wrote this briefing. Here's what PR Briefings confirmed on its own, and what's left for you to confirm while you review.</p><div class="vtiles">${tile(
+    "v-checked",
+    failed ? "bad" : "good",
+    `${checked.length - failed}/${checked.length}`,
     "Checked automatically",
-    "PR Briefings ran these checks itself while generating the briefing.",
-    checked,
-  )}${section("Needs you", "These can only be confirmed by a person, for example by looking at the running app.", needs)}${section(
-    "The model's claims to confirm",
-    "The model says these stay true. Nothing checked them, so keep an eye on them as you read the diff.",
-    claims,
-  )}${checksSection(checks)}`;
+    failed ? `${failed} check${failed === 1 ? "" : "s"} disagreed` : "against the code and GitHub",
+  )}${tile("v-needs", needs.length ? "warn" : "neutral", String(needs.length), "Need you", needs.length ? "only a person can confirm" : "nothing to look at by hand")}${tile(
+    "v-claims",
+    "info",
+    String(claims.length),
+    "Claims to confirm",
+    "stated by the AI, not checked",
+  )}</div>
+<h3 class="sec" id="v-checked">Checked automatically</h3><ul class="vchecks">${checkRows}</ul>
+${needs.length ? `<h3 class="sec" id="v-needs">Needs you</h3><p class="muted">Only a person can confirm these, for example by trying the change in the running app.</p><ul class="todo">${todo(needs, "need")}</ul>` : ""}
+<h3 class="sec" id="v-claims">Claims to confirm while you review</h3>${
+    claims.length
+      ? `<p class="muted">The AI says these stay true, but nothing checked them. Tick each one off once the diff convinces you. Ticks reset when you leave the page.</p><ul class="todo">${todo(claims, "claim")}</ul>`
+      : `<p class="muted">The AI made no claims that need confirming.</p>`
+  }
+${checksSection(checks)}`;
 }
 
 const BUCKET_WORD: Record<CheckRun["bucket"], string> = { pass: "passed", fail: "failed", pending: "pending", skipping: "skipped", cancel: "cancelled" };
@@ -486,20 +513,26 @@ function checksSection(checks: CheckRun[] | null) {
 }
 
 const LEVELS = ["risk", "watch", "note"] as const;
-const LEVEL_TITLE = { risk: "High — could change behavior or break something", watch: "Medium — worth checking", note: "Low — good to know" } as const;
+const LEVEL_WORD = { risk: "High", watch: "Medium", note: "Low" } as const;
+const LEVEL_HINT = { risk: "could change behavior or break something", watch: "worth checking", note: "good to know" } as const;
 function risks(document: ResolvedDocument) {
-  const lead = intro("What this tab is for", "The model's list of spots worth a closer look while you review: likely trouble spots and open questions. They are not confirmed bugs. Each one says how to check it and where to look.");
-  if (!document.considerations.length) return `${lead}<p class="muted">The model didn't flag any risks or open questions for this PR.</p>`;
-  return `${lead}${LEVELS.map((level) => {
-    const items = document.considerations.filter((item) => item.level === level);
-    if (!items.length) return "";
-    return `<h3 class="sec"><span class="dot sev-${level}"></span>${LEVEL_TITLE[level]} <span class="muted">· ${items.length}</span></h3>${items
-      .map(
-        (item) =>
-          `<article class="risk risk-${level}"><h4>${icon(level === "note" ? "info" : "warn", `sev-i-${level}`)}${esc(item.title)}</h4><p>${esc(item.detail)}</p>${item.check ? `<p class="check"><b>How to check:</b> ${esc(item.check)}</p>` : ""}${item.evidence.length ? `<p class="sub-label">Where to look</p>${evidenceLinks(item.evidence)}` : ""}</article>`,
-      )
-      .join("")}`;
-  }).join("")}`;
+  const lead = `<p class="lede">Spots the AI thinks deserve a closer look while you review: likely trouble spots and open questions, not confirmed bugs. Open one to see how to check it and where to look.</p>`;
+  if (!document.considerations.length) return `${lead}<p class="muted">The AI didn't flag any risks or open questions for this PR.</p>`;
+  const items = [...document.considerations].sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
+  const count = (level: (typeof LEVELS)[number]) => items.filter((item) => item.level === level).length;
+  // CSS-only severity filter: radio chips hide the other severities.
+  const chips = `<input class="rfilter" type="radio" name="risk-filter" id="rf-all" checked>${LEVELS.filter(count)
+    .map((level) => `<input class="rfilter" type="radio" name="risk-filter" id="rf-${level}">`)
+    .join("")}<div class="rchips"><label for="rf-all">All <b>${items.length}</b></label>${LEVELS.filter(count)
+    .map((level) => `<label for="rf-${level}"><span class="dot sev-${level}"></span>${LEVEL_WORD[level]} <b>${count(level)}</b></label>`)
+    .join("")}<span class="muted rchips-hint">High: ${LEVEL_HINT.risk} · Medium: ${LEVEL_HINT.watch} · Low: ${LEVEL_HINT.note}</span></div>`;
+  const rows = items
+    .map((item, index) => {
+      const where = item.evidence[0] ? location(item.evidence[0]) : "";
+      return `<div class="xrow rrow sev-row-${item.level}" id="risk-${index + 1}"><input class="xtoggle" type="checkbox" id="risk-${index + 1}-open"${index === 0 && item.level === "risk" ? " checked" : ""}><label class="xhead" for="risk-${index + 1}-open">${icon("chevron", "chev")}<span class="sev-pill sev-${item.level}">${LEVEL_WORD[item.level]}</span><span class="xtitle"><b>${esc(item.title)}</b><span class="xsum">${esc(item.detail)}</span></span>${where ? `<span class="xmeta mono">${esc(where)}${item.evidence.length > 1 ? ` +${item.evidence.length - 1}` : ""}</span>` : ""}</label><div class="xbody"><p>${esc(item.detail)}</p>${item.check ? `<p class="check"><b>How to check:</b> ${esc(item.check)}</p>` : ""}${item.evidence.length ? `<p class="sub-label">Where to look</p>${evidenceLinks(item.evidence)}` : ""}</div></div>`;
+    })
+    .join("");
+  return `${lead}${chips}<div class="xlist risks-list">${rows}</div>`;
 }
 
 function evidence(pr: PullRequest, references: ResolvedEvidence[], document: ResolvedDocument, facts: BriefingFacts, generationId: string, model: string) {
@@ -563,6 +596,17 @@ h3.sub{display:flex;gap:8px;align-items:center;font-size:15px;margin:16px 0 4px}
 .summary-line{font-size:15px;margin:0 0 6px}.key{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--muted);font-size:12.5px}.key b{color:var(--ink);font-weight:600;margin-left:-6px}.disclosure.inline{border:0}.disclosure.inline summary{padding:4px 0;font-size:12.5px;color:var(--accent)}
 .risk{background:var(--code);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:10px}.risk-risk{border-left-color:var(--bad)}.risk-watch{border-left-color:var(--warn)}.risk h4{display:flex;gap:8px;align-items:center;margin:0 0 6px;font-size:14px}.risk .check{background:var(--soft);border-radius:6px;padding:6px 10px}.sec .dot{margin-right:8px}
 @media(max-width:700px){.shot-pair{grid-template-columns:1fr}}
+.lede{font-size:14.5px;margin:0 0 14px}
+.xlist{border:1px solid var(--line);border-radius:10px;background:var(--code);margin:4px 0 14px;overflow:hidden}.xrow{border-bottom:1px solid var(--line);scroll-margin-top:12px}.xrow:last-child{border-bottom:0}.xtoggle{position:absolute;opacity:0;pointer-events:none}.xhead{display:flex;gap:10px;align-items:center;padding:10px 12px;cursor:pointer}.xhead:hover{background:var(--soft)}.xhead .chev{flex:none;color:var(--muted);transition:transform .15s}.xtoggle:checked+.xhead .chev,.xrow:target .xhead .chev{transform:rotate(90deg)}.xtitle{display:grid;flex:1;min-width:0}.xtitle b{font-weight:600}.xsum{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xtoggle:checked+.xhead .xsum,.xrow:target .xsum{display:none}.xmeta{flex:none;color:var(--muted);font-size:12.5px;text-align:right;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.xbody{display:none;padding:0 14px 12px 46px}.xbody>p:first-child{margin-top:0}.xtoggle:checked~.xbody,.xrow:target .xbody{display:block}.xrow:target,.xrow.flash,.impacts .flash{box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft)}.xrow{transition:background .4s}.xtoggle:focus-visible+.xhead{outline:2px solid var(--accent);outline-offset:-2px}
+.role-dot{width:10px;height:10px;border-radius:3px;flex:none;border:1px solid var(--sk-ink)}.role-changed .role-dot{background:var(--sk-yellow)}.role-affected .role-dot{background:var(--sk-blue)}.role-related .role-dot{background:var(--sk-gray)}
+.rfilter{position:absolute;opacity:0;pointer-events:none}.rchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}.rchips label{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 11px;cursor:pointer;background:var(--code);font-size:13px}.rchips label b{font-weight:600}.rchips-hint{font-size:12px;margin-left:6px}
+#rf-all:checked~.rchips label[for=rf-all],#rf-risk:checked~.rchips label[for=rf-risk],#rf-watch:checked~.rchips label[for=rf-watch],#rf-note:checked~.rchips label[for=rf-note]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+#rf-risk:checked~.risks-list .rrow:not(.sev-row-risk),#rf-watch:checked~.risks-list .rrow:not(.sev-row-watch),#rf-note:checked~.risks-list .rrow:not(.sev-row-note){display:none}
+.sev-pill{flex:none;font-size:11.5px;font-weight:700;border-radius:999px;padding:1px 8px;color:#fff}.sev-pill.sev-risk{background:var(--bad)}.sev-pill.sev-watch{background:var(--warn)}.sev-pill.sev-note{background:var(--accent)}
+.vtiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:6px}.vtile{display:grid;gap:1px;text-decoration:none;color:var(--ink);background:var(--code);border:1px solid var(--line);border-top:3px solid var(--line);border-radius:10px;padding:10px 14px}.vtile:hover{background:var(--soft)}.vtile b{font-size:22px;line-height:1.2}.vtile-label{font-weight:600}.vtile .muted{font-size:12.5px}.vtile.tone-good{border-top-color:var(--good)}.vtile.tone-good b{color:var(--good)}.vtile.tone-bad{border-top-color:var(--bad)}.vtile.tone-bad b{color:var(--bad)}.vtile.tone-warn{border-top-color:var(--warn)}.vtile.tone-warn b{color:var(--warn)}.vtile.tone-info{border-top-color:var(--accent)}.vtile.tone-info b{color:var(--accent)}
+.vchecks{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--code)}.vcheck{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--line)}.vcheck:last-child{border-bottom:0}.vcheck>.i{margin-top:3px}.vcheck>div{flex:1}.vcheck p{margin:2px 0 0;color:var(--muted)}.vby{flex:none;font-size:12px;color:var(--muted);background:var(--soft);border-radius:999px;padding:1px 8px}
+.todo{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--code)}.todo li{border-bottom:1px solid var(--line)}.todo li:last-child{border-bottom:0}.todo input{position:absolute;opacity:0;pointer-events:none}.todo label{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;cursor:pointer}.todo label>span:last-child{display:grid}.todo b{font-weight:500}.todo .box{display:grid;place-items:center;flex:none;width:18px;height:18px;margin-top:1px;border:1.5px solid var(--muted);border-radius:5px}.todo .box .i{width:12px;height:12px;stroke-width:3;opacity:0;color:#fff}.todo input:checked+label .box{background:var(--good);border-color:var(--good)}.todo input:checked+label .box .i{opacity:1}.todo input:checked+label b{color:var(--muted);text-decoration:line-through}.todo input:focus-visible+label{outline:2px solid var(--accent);outline-offset:-2px}
+@media(max-width:700px){.vtiles{grid-template-columns:1fr}.xmeta{display:none}}
 @media(max-width:700px){.metrics{grid-template-columns:1fr 1fr}.cols,.compare-head,.compare-pair{grid-template-columns:1fr}.card{padding:16px 14px}body{padding:12px 8px 32px}}
 @media print{.tab-input,.tabbar{display:none}.panel{display:block!important;margin-bottom:18px}.panel:before{content:attr(data-title);display:block;font-weight:700;font-size:15px;border-bottom:1px solid var(--line);margin-bottom:10px}}`;
 
