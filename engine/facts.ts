@@ -89,7 +89,10 @@ export function parseUnifiedDiff(diff: string): DiffFile[] {
 }
 
 export interface AreaBreakdown {
+  /** Short display labels (last distinct directory segment). */
   labels: string[];
+  /** Full directory paths (or bucket names) behind each label. */
+  paths: string[];
   added: number[];
   removed: number[];
   files: number[];
@@ -103,6 +106,21 @@ const DOC_PATH = /(^|\/)(docs?|\.changeset|plans?)(\/|$)|\.(md|mdx|rst|txt)$/i;
  * own bucket, everything else is grouped by directory at the deepest level
  * that still yields `limit` groups or fewer.
  */
+/** "public/js/components/" → "components/", growing until labels are unique. */
+function shortLabels(paths: string[]) {
+  const parts = paths.map((path) => (path.endsWith("/") ? path.slice(0, -1).split("/") : null));
+  const labels = paths.map((path, index) => (parts[index] ? `${parts[index]!.at(-1)}/` : path));
+  for (let depth = 2; depth <= 6; depth++) {
+    const seen = new Map<string, number>();
+    labels.forEach((label) => seen.set(label, (seen.get(label) ?? 0) + 1));
+    if ([...seen.values()].every((count) => count === 1)) break;
+    labels.forEach((label, index) => {
+      if (seen.get(label)! > 1 && parts[index]) labels[index] = `${parts[index]!.slice(-depth).join("/")}/`;
+    });
+  }
+  return labels;
+}
+
 export function areaBreakdown(files: DiffFile[], limit = 8): AreaBreakdown {
   const special = (path: string) =>
     TEST_PATH.test(path) ? "Tests" : DOC_PATH.test(path) ? "Docs" : null;
@@ -144,8 +162,10 @@ export function areaBreakdown(files: DiffFile[], limit = 8): AreaBreakdown {
     );
     entries = [...kept, ["Other", other]];
   }
+  const paths = entries.map(([label]) => label);
   return {
-    labels: entries.map(([label]) => label),
+    labels: shortLabels(paths),
+    paths,
     added: entries.map(([, value]) => value.added),
     removed: entries.map(([, value]) => value.removed),
     files: entries.map(([, value]) => value.files),

@@ -180,9 +180,38 @@ function normalizeEvidenceCardinality(value: unknown) {
     ...document,
     summary,
     behavior,
-    impacts: normalizeEight(document.impacts),
+    impacts: singleChanged(normalizeEight(document.impacts)),
+    flows: Array.isArray(document.flows)
+      ? document.flows.map((flow) =>
+          flow && typeof flow === "object" && !Array.isArray(flow)
+            ? {
+                ...(flow as Record<string, unknown>),
+                steps: singleChanged((flow as Record<string, unknown>).steps),
+              }
+            : flow,
+        )
+      : document.flows,
     considerations: normalizeEight(document.considerations),
   };
+}
+
+/**
+ * Presentation rule: an impact map (or a flow) highlights one changed item.
+ * Models sometimes mark several; keep the first instead of failing the briefing.
+ */
+function singleChanged(items: unknown) {
+  if (!Array.isArray(items)) return items;
+  let seen = false;
+  return items.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const record = item as Record<string, unknown>;
+    if (record.changed !== true) return item;
+    if (!seen) {
+      seen = true;
+      return item;
+    }
+    return { ...record, changed: false };
+  });
 }
 
 export function parseBriefingDocument(output: string): BriefingDocument {

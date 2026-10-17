@@ -43,6 +43,16 @@ export function mermaidLabel(value: string) {
   return `"${short || "…"}"`;
 }
 
+/** "Most new lines land in utils/ (+347); components/ shrinks the most (−227 net)." */
+function areaCaption(areas: BriefingFacts["areas"]) {
+  if (!areas.labels.length) return null;
+  const most = areas.added.indexOf(Math.max(...areas.added));
+  const net = areas.added.map((added, index) => added - areas.removed[index]!);
+  const shrink = net.indexOf(Math.min(...net));
+  const label = (index: number) => `**${escapeMarkdown(areas.labels[index]!)}**`;
+  return `Most new lines land in ${label(most)} (+${areas.added[most]})${net[shrink]! < 0 ? `; ${label(shrink)} shrinks the most (${net[shrink]} net)` : ""}.`;
+}
+
 const SEVERITY = { risk: "high", watch: "medium", note: "low" } as const;
 const KIND_TONE = { behavior: "info", surface: "info", scope: "neutral", compatibility: "good" } as const;
 const KIND_ICON = { behavior: "Play", surface: "Layers", scope: "Lock", compatibility: "Check" } as const;
@@ -62,15 +72,11 @@ Card(b.meta.heading, [
   Text(b.verdict),
   Row(b.metrics.map(m => Metric(m.label, m.value, note: m.note, tone: m.tone))),
   Callout(b.remember, tone: "info", title: "Remember this"),
-  Tabs(["Overview", "Risks", "Verified", "Before / after", "Impact & flow", "Evidence"], [
+  Tabs(["Overview", "Before / after", "Impact & flow", "Verified", "Risks", "Evidence"], [
     Stack([
-      List(b.summary.map(s => ({title: s.title, icon: s.icon, value: Badge(s.kind, tone: s.tone)}))),
-      b.areas.labels.length > 0 ? Chart("bar", b.areas.labels, {Added: b.areas.added, Removed: b.areas.removed}, unit: "lines") : null
-    ]),
-    b.findings.length > 0 ? Findings(b.findings, title: "What to pay attention to") : Text("No high-level risks or open questions were identified.", tone: "neutral"),
-    Stack([
-      Acceptance(b.acceptance),
-      b.checks.length > 0 ? Pipeline(b.checks) : Text(b.checksNote, tone: "neutral")
+      List(b.summary.map(s => ({title: s.title, detail: s.detail, icon: s.icon, value: Badge(s.kind, tone: s.tone)}))),
+      b.areas.labels.length > 0 ? Chart("bar", b.areas.labels, {Added: b.areas.added, Removed: b.areas.removed}, unit: "lines") : null,
+      b.areaCaption ? Text(b.areaCaption) : null
     ]),
     Stack([
       Row([
@@ -80,14 +86,19 @@ Card(b.meta.heading, [
       b.keyHunk ? Text(b.keyHunk.caption) : null,
       b.keyHunk ? Diff(b.keyHunk.patch) : null,
       b.visuals.length > 0 ? Text("**What it looks like** · switch a comparison to *Difference* to see what moved.") : null,
-      Stack(b.visuals.map(v => v.before && v.after ? Compare([{src: v.before, label: "Before · " + v.label}, {src: v.after, label: "After"}]) : Stack([Text(v.caption), Image(v.before ?? v.after, alt: v.label)])))
+      Stack(b.visuals.map(v => v.before && v.after ? Compare([{src: v.before, label: "Base · " + v.label}, {src: v.after, label: "Head"}]) : Stack([Text(v.caption), Image(v.before ?? v.after, alt: v.label)])))
     ]),
     Stack([
       b.graph ? Diagram(b.graph.mermaid, b.graph.details) : null,
       b.treemap.length > 1 ? Treemap(b.treemap, "lines") : null,
-      Stack(b.flows.map(f => Details(f.title, [Diagram(f.mermaid, f.details)], open: true))),
-      Stack([${excerpts.map((excerpt, index) => `Stack([Text(b.excerpts[${index}].caption), Snippet(${JSON.stringify(excerpt.path)}, ${Math.trunc(excerpt.from)}, ${Math.trunc(excerpt.to)})])`).join(", ")}])
+      Stack(b.flows.map(f => Details("Flow: " + f.title, [Steps(f.steps)]))),
+      ${excerpts.length ? `Details("Key code", [${excerpts.map((excerpt, index) => `Stack([Text(b.excerpts[${index}].caption), Snippet(${JSON.stringify(excerpt.path)}, ${Math.trunc(excerpt.from)}, ${Math.trunc(excerpt.to)})])`).join(", ")}])` : "null"}
     ]),
+    Stack([
+      Acceptance(b.acceptance),
+      b.checks.length > 0 ? Pipeline(b.checks) : Text(b.checksNote, tone: "neutral")
+    ]),
+    b.findings.length > 0 ? Findings(b.findings, title: "What to pay attention to") : Text("No high-level risks or open questions were identified.", tone: "neutral"),
     Stack([
       Text(b.evidenceNote, tone: "neutral"),
       Sources(b.sources),
@@ -182,8 +193,15 @@ export function buildGenuiBundle(options: {
         : { label: "CI", value: `${checks.passed}/${checks.total}`, note: checks.failed ? `${checks.failed} failing` : checks.pending ? `${checks.pending} pending` : "passing", tone: checks.failed ? "bad" : checks.pending ? "warn" : "good" },
       { label: "Evidence", value: `${counts.resolved}/${counts.total}`, note: "citations matched", tone: counts.unresolved ? "bad" : counts.total && counts.resolved === counts.total ? "good" : "warn" },
     ],
-    summary: document.summary.map((item) => ({ title: item.claim, kind: item.kind, tone: KIND_TONE[item.kind], icon: KIND_ICON[item.kind] })),
-    areas: facts.areas,
+    summary: document.summary.map((item) => ({
+      title: item.claim,
+      detail: item.evidence.slice(0, 2).map((e) => `${e.path}${e.line ? `:${e.line}` : ""}`).join(" · "),
+      kind: item.kind === "compatibility" ? "compat" : item.kind,
+      tone: KIND_TONE[item.kind],
+      icon: KIND_ICON[item.kind],
+    })),
+    areas: { labels: facts.areas.labels, added: facts.areas.added, removed: facts.areas.removed },
+    areaCaption: areaCaption(facts.areas),
     findings: [...document.considerations]
       .sort((a, b) => ["risk", "watch", "note"].indexOf(a.level) - ["risk", "watch", "note"].indexOf(b.level))
       .map((item) => {
@@ -214,8 +232,11 @@ export function buildGenuiBundle(options: {
     treemap: facts.files.filter((file) => file.additions + file.deletions > 0).map((file) => ({ path: file.path, size: file.additions + file.deletions })),
     flows: document.flows.map((flow) => ({
       title: flow.title,
-      mermaid: ["flowchart LR", ...flow.steps.map((step, index) => `  s${index}[${mermaidLabel(step.changed ? `${step.label} · changed` : step.label)}]`), ...flow.steps.slice(1).map((_, index) => `  s${index} --> s${index + 1}`)].join("\n"),
-      details: Object.fromEntries(flow.steps.map((step, index) => [`s${index}`, `${step.changed ? "**Changed by this PR.** " : ""}${escapeMarkdown(step.detail)}`])),
+      steps: flow.steps.map((step) => ({
+        title: step.changed ? `${step.label} · changed by this PR` : step.label,
+        detail: step.detail,
+        ...(step.changed ? { status: "current" } : {}),
+      })),
     })),
     excerpts: facts.excerpts
       .map((excerpt) => ({ excerpt, path: copy(excerpt.side, excerpt.path) }))
