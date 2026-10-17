@@ -236,7 +236,7 @@ function ManualBriefing({
  * key chords so BB shortcuts keep working, and handle in-page "#id" links
  * (which would otherwise navigate a srcdoc frame away from the report).
  */
-const LINK_BRIDGE = `<script>document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#"){e.preventDefault();var t=document.getElementById(h.slice(1));if(t){var c=t.querySelector(".xtoggle");if(c)c.checked=true;t.scrollIntoView({block:"center",behavior:"smooth"});t.classList.add("flash");setTimeout(function(){t.classList.remove("flash")},1400)}return}if(/^https:\\/\\//i.test(h)){e.preventDefault();parent.postMessage({type:"pr-briefings:open-url",href:h},"*")}},true);document.addEventListener("keydown",function(e){if(!(e.metaKey||e.ctrlKey||e.altKey))return;if(!e.shiftKey&&!e.altKey&&/^[acvxzy]$/i.test(e.key))return;parent.postMessage({type:"pr-briefings:key",key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,altKey:e.altKey,shiftKey:e.shiftKey},"*")},true)</script>`;
+const LINK_BRIDGE = `<script>document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#"){e.preventDefault();var t=document.getElementById(h.slice(1));if(t){var c=t.querySelector(".xtoggle");if(c)c.checked=true;t.scrollIntoView({block:"center",behavior:"smooth"});t.classList.add("flash");setTimeout(function(){t.classList.remove("flash")},1400)}return}if(/^https:\\/\\//i.test(h)){e.preventDefault();parent.postMessage({type:"pr-briefings:open-url",href:h},"*")}},true);function progress(){document.querySelectorAll("[data-progress]").forEach(function(el){var g=el.getAttribute("data-progress");var all=document.querySelectorAll('input[data-check^="'+g+'-"]');var done=0;all.forEach(function(i){if(i.checked)done++});el.textContent=done+" of "+all.length+" confirmed"})}document.addEventListener("change",function(e){var t=e.target;var k=t&&t.getAttribute?t.getAttribute("data-check"):null;if(!k)return;parent.postMessage({type:"pr-briefings:check",key:k,checked:!!t.checked},"*");progress()},true);window.addEventListener("message",function(e){if(e.source!==parent)return;var d=e.data;if(!d||d.type!=="pr-briefings:checks"||!Array.isArray(d.keys))return;d.keys.forEach(function(k){var i=document.querySelector('input[data-check="'+String(k).replace(/[^a-z0-9-]/g,"")+'"]');if(i)i.checked=true});progress()});parent.postMessage({type:"pr-briefings:ready"},"*");document.addEventListener("keydown",function(e){if(!(e.metaKey||e.ctrlKey||e.altKey))return;if(!e.shiftKey&&!e.altKey&&/^[acvxzy]$/i.test(e.key))return;parent.postMessage({type:"pr-briefings:key",key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,altKey:e.altKey,shiftKey:e.shiftKey},"*")},true)</script>`;
 
 export function withLinkBridge(html: string) {
   const at = html.toLowerCase().lastIndexOf("</body>");
@@ -277,10 +277,31 @@ function BriefingViewer({ url }: { url: string }) {
   const [error, setError] = useState("");
   const [record, setRecord] = useState<BriefingRecord | null>(null);
   const [genuiAvailable, setGenuiAvailable] = useState(false);
+  const [head, setHead] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const ticks = useRef<string[] | null>(null);
+  const frameReady = useRef(false);
+  const sendTicks = useCallback(() => {
+    if (frameReady.current && ticks.current)
+      frame.current?.contentWindow?.postMessage({ type: "pr-briefings:checks", keys: ticks.current }, "*");
+  }, []);
   useEffect(() => {
     let live = true;
     rpc.call("briefing_html", { url }).then(
-      (value) => live && setReport({ html: withLinkBridge(value.html), title: value.title, subject: value.subject }),
+      (value) => {
+        if (!live) return;
+        frameReady.current = false;
+        setReport({ html: withLinkBridge(value.html), title: value.title, subject: value.subject });
+        setHead(value.head);
+        if (value.head)
+          rpc.call("checklist_get", { url, head: value.head }).then(
+            (state) => {
+              ticks.current = state.keys;
+              sendTicks();
+            },
+            () => {},
+          );
+      },
       (cause) => live && setError(String(cause)),
     );
     rpc.call("snapshot").then(
@@ -294,11 +315,28 @@ function BriefingViewer({ url }: { url: string }) {
     return () => {
       live = false;
     };
-  }, [rpc, url]);
+  }, [rpc, url, sendTicks]);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (!frame.current || event.source !== frame.current.contentWindow) return;
       const data = event.data as { type?: unknown; href?: unknown } | null;
+      if (data?.type === "pr-briefings:ready") {
+        frameReady.current = true;
+        sendTicks();
+        return;
+      }
+      if (data?.type === "pr-briefings:check") {
+        const tick = data as unknown as { key?: unknown; checked?: unknown };
+        if (!head || typeof tick.key !== "string" || !/^[a-z]+-[a-z0-9]{1,13}$/.test(tick.key)) return;
+        void rpc
+          .call("checklist_set", { url, head, key: tick.key, checked: tick.checked === true })
+          .then((state) => {
+            ticks.current = state.keys;
+            setNotice("");
+          })
+          .catch(() => setNotice("Couldn't save that tick. Try again."));
+        return;
+      }
       if (data?.type === "pr-briefings:key") {
         // Focus inside the report frame hides BB's shortcuts from the page, so
         // modifier chords are replayed on the frame element and bubble to BB.
@@ -323,7 +361,7 @@ function BriefingViewer({ url }: { url: string }) {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [navigate]);
+  }, [navigate, rpc, url, head, sendTicks]);
   const back = () => navigate.toPluginPanel("briefings", { subPath: "" });
   return (
     <main className="pb-viewer">
@@ -336,6 +374,11 @@ function BriefingViewer({ url }: { url: string }) {
           <strong>{report?.title || record?.title || "Briefing"}</strong>
           <span>{report?.subject || record?.subject}</span>
         </div>
+        {notice && (
+          <span className="pb-viewer-notice" role="status">
+            {notice}
+          </span>
+        )}
         <div className="pb-viewer-actions">
           <Button size="sm" variant="outline" onClick={() => navigate.openUrl(url)}>
             <Icon name="GitPullRequest" className="size-4" />

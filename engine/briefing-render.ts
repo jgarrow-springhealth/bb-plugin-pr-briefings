@@ -436,6 +436,9 @@ function impactAndFlow(document: ResolvedDocument) {
   return `<p class="muted">Who is affected by the change, and how information moves through it.</p><h3 class="sec">What this touches</h3><p>${changed ? `${plural(changed, "part")} changed directly` : "No single part is marked as the change"}${graph ? `; ${plural(linked.size - changed, "part")} depend on it` : ""}.</p>${graph ? impactSketch(document, graph) : ""}<div class="xlist">${cards}</div><h3 class="sec">How it flows</h3>${flows}`;
 }
 
+/** Progress line the in-app viewer keeps current as ticks change. */
+const progressText = (group: string, total: number) => `<span data-progress="${group}">0 of ${total} confirmed</span>`;
+
 function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: ResolvedEvidence[]) {
   const counts = evidenceCounts(references);
   // The "N citations without a quote" row is part of the citation check, not a separate claim.
@@ -465,7 +468,7 @@ function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: 
     list
       .map(
         (row, index) =>
-          `<li><input type="checkbox" id="${prefix}-${index}"><label for="${prefix}-${index}"><span class="box">${icon("check")}</span><span><b>${esc(row.name)}</b>${row.needs ? `<span class="muted">${esc(row.needs)}</span>` : ""}</span></label></li>`,
+          `<li><input type="checkbox" id="${prefix}-${index}" data-check="${prefix}-${seedOf(row.name).toString(36)}"><label for="${prefix}-${index}"><span class="box">${icon("check")}</span><span><b>${esc(row.name)}</b>${row.needs ? `<span class="muted">${esc(row.needs)}</span>` : ""}</span></label></li>`,
       )
       .join("");
   return `<p class="lede">An AI wrote this briefing. Here's what PR Briefings confirmed on its own, and what's left for you to confirm while you review.</p><div class="vtiles">${tile(
@@ -474,18 +477,18 @@ function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: 
     `${checked.length - failed}/${checked.length}`,
     "Checked automatically",
     failed ? `${failed} check${failed === 1 ? "" : "s"} disagreed` : "against the code and GitHub",
-  )}${tile("v-needs", needs.length ? "warn" : "neutral", String(needs.length), "Need you", needs.length ? "only a person can confirm" : "nothing to look at by hand")}${tile(
+  )}${tile("v-needs", needs.length ? "warn" : "neutral", String(needs.length), "Need you", needs.length ? progressText("need", needs.length) : "nothing to look at by hand")}${tile(
     "v-claims",
     "info",
     String(claims.length),
     "Claims to confirm",
-    "stated by the AI, not checked",
+    claims.length ? progressText("claim", claims.length) : "stated by the AI, not checked",
   )}</div>
 <h3 class="sec" id="v-checked">Checked automatically</h3><ul class="vchecks">${checkRows}</ul>
 ${needs.length ? `<h3 class="sec" id="v-needs">Needs you</h3><p class="muted">Only a person can confirm these, for example by trying the change in the running app.</p><ul class="todo">${todo(needs, "need")}</ul>` : ""}
 <h3 class="sec" id="v-claims">Claims to confirm while you review</h3>${
     claims.length
-      ? `<p class="muted">The AI says these stay true, but nothing checked them. Tick each one off once the diff convinces you. Ticks reset when you leave the page.</p><ul class="todo">${todo(claims, "claim")}</ul>`
+      ? `<p class="muted">The AI says these stay true, but nothing checked them. Tick each one off once the diff convinces you. Your ticks are saved with this version of the PR and reset when it gets new commits.</p><ul class="todo">${todo(claims, "claim")}</ul>`
       : `<p class="muted">The AI made no claims that need confirming.</p>`
   }
 ${checksSection(checks)}`;

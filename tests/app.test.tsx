@@ -281,6 +281,8 @@ test("offers a Generative UI chat view for ready briefings with a bundle", async
 
 test("shows a briefing in the page and relays its links to BB's opener", async () => {
   const app = await loadPluginApp(() => import("../app"));
+  const checklistGet = vi.fn(() => ({ keys: ["claim-old"] }));
+  const checklistSet = vi.fn(() => ({ keys: ["claim-abc1"] }));
   const { withLinkBridge } = await import("../app");
   expect(withLinkBridge("<html><body><p>x</p></body></html>")).toMatch(
     /<p>x<\/p><script>[\s\S]*pr-briefings:open-url[\s\S]*<\/script><\/body>/,
@@ -290,6 +292,8 @@ test("shows a briefing in the page and relays its links to BB's opener", async (
     { subPath: `view/${encodeURIComponent(url)}` }, // an older, percent-encoded link
     {
       rpc: {
+        checklist_get: checklistGet,
+        checklist_set: checklistSet,
         briefing_html: () => ({
           html: '<html><body><a href="https://github.com/x">x</a></body></html>',
           title: pr.title,
@@ -326,6 +330,12 @@ test("shows a briefing in the page and relays its links to BB's opener", async (
   window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:key", key: "j", code: "KeyJ", metaKey: true }, source: window }));
   expect(seen.map((event) => [event.key, event.metaKey, event.shiftKey, event.bubbles])).toEqual([["j", true, true, true]]);
   expect(withLinkBridge("<body></body>")).toContain("pr-briefings:key");
+  // A tick inside the report is saved for this PR head.
+  await waitFor(() => expect(checklistGet).toHaveBeenCalledWith({ url, head: pr.headSha }));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:check", key: "claim-abc1", checked: true }, source: frame.contentWindow }));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:check", key: "<script>", checked: true }, source: frame.contentWindow }));
+  await waitFor(() => expect(checklistSet).toHaveBeenCalledTimes(1));
+  expect(checklistSet).toHaveBeenCalledWith({ url, head: pr.headSha, key: "claim-abc1", checked: true });
   fireEvent.click(view.getByRole("button", { name: "Pull request" }));
   expect(JSON.stringify(view.inspection.navigateCalls)).toContain(url);
   view.lifecycle.unmount();

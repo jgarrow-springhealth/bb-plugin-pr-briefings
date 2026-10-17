@@ -365,3 +365,7 @@
   border: 0;
   background: transparent;
 }
+.pb-viewer-notice {
+  color: var(--destructive, #b4323a);
+  font-size: 12.5px;
+}

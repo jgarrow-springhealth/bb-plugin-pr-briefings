@@ -212,6 +212,17 @@ export const rpcContract = defineRpcContract({
     input: urlInput,
     output: BriefingStatus,
   },
+  /** Review checklist ticks (Verified tab), saved per PR head. */
+  checklist_get: {
+    input: urlInput.extend({ head: sha }).strict(),
+    output: z.object({ keys: z.array(z.string()).max(200) }).strict(),
+  },
+  checklist_set: {
+    input: urlInput
+      .extend({ head: sha, key: z.string().regex(/^[a-z]+-[a-z0-9]{1,13}$/), checked: z.boolean() })
+      .strict(),
+    output: z.object({ keys: z.array(z.string()).max(200) }).strict(),
+  },
   /** The ready report's HTML, for the in-app viewer. */
   briefing_html: {
     input: urlInput,

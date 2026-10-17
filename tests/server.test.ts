@@ -197,3 +197,22 @@ test("queues and completes a briefing independently of Pair Review", async () =>
     await host.harness.lifecycle.dispose();
   }
 });
+
+test("saves review checklist ticks per PR head and drops older heads", async () => {
+  const host = await createBoundaryHost();
+  try {
+    const call = (method: string, input: unknown) => host.harness.behavior.callRpc(method as never, input as never);
+    const head = "b".repeat(40);
+    await expect(call("checklist_set", { url, head, key: "claim-abc1", checked: true })).resolves.toEqual({ keys: ["claim-abc1"] });
+    await call("checklist_set", { url, head, key: "claim-zz9", checked: true });
+    await call("checklist_set", { url, head, key: "claim-abc1", checked: false });
+    await expect(call("checklist_get", { url, head })).resolves.toEqual({ keys: ["claim-zz9"] });
+    // A new head starts fresh, and ticks for the old head are cleared.
+    const next = "c".repeat(40);
+    await call("checklist_set", { url, head: next, key: "need-1", checked: true });
+    await expect(call("checklist_get", { url, head })).resolves.toEqual({ keys: [] });
+    await expect(call("checklist_set", { url, head, key: "Bad Key!", checked: true })).rejects.toThrow();
+  } finally {
+    await host.harness.lifecycle.dispose();
+  }
+});

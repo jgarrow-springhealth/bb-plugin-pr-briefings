@@ -84,6 +84,7 @@ export default function plugin(bb: BbPluginApi) {
     `CREATE TABLE briefings (url TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', head TEXT, state TEXT NOT NULL, file TEXT, hostId TEXT, error TEXT, updatedAt INTEGER NOT NULL)`,
     `CREATE TABLE cache (key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
     `ALTER TABLE briefings ADD COLUMN bundle TEXT`,
+    `CREATE TABLE checklist (url TEXT NOT NULL, head TEXT NOT NULL, key TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY (url, head, key))`,
   ]);
   db.prepare(
     "UPDATE briefings SET state='queued' WHERE state='generating'",
@@ -167,6 +168,12 @@ export default function plugin(bb: BbPluginApi) {
           },
     );
   };
+  const checklistKeys = (url: string, head: string) =>
+    (
+      db
+        .prepare("SELECT key FROM checklist WHERE url=? AND head=? ORDER BY key LIMIT 200")
+        .all(url, head) as Array<{ key: string }>
+    ).map((row) => row.key);
   const enqueue = async (inputUrl: string) => {
     const url = PullRequestUrl.parse(inputUrl);
     const { hostname } = await preferences();
@@ -281,6 +288,17 @@ export default function plugin(bb: BbPluginApi) {
     },
     briefing_get: ({ url, head }) => statusFor(url, head),
     briefing_generate: ({ url }) => enqueue(url),
+    checklist_get: ({ url, head }) => ({ keys: checklistKeys(url, head) }),
+    checklist_set: ({ url, head, key, checked }) => {
+      if (checked)
+        db.prepare(
+          "INSERT INTO checklist (url,head,key,updatedAt) VALUES (?,?,?,?) ON CONFLICT(url,head,key) DO UPDATE SET updatedAt=excluded.updatedAt",
+        ).run(url, head, key, Date.now());
+      else db.prepare("DELETE FROM checklist WHERE url=? AND head=? AND key=?").run(url, head, key);
+      // Ticks for older heads of this PR no longer apply.
+      db.prepare("DELETE FROM checklist WHERE url=? AND head<>?").run(url, head);
+      return { keys: checklistKeys(url, head) };
+    },
     briefing_html: async ({ url }) => {
       const record = db
         .prepare("SELECT * FROM briefings WHERE url=?")
