@@ -229,7 +229,131 @@ function ManualBriefing({
   );
 }
 
-function BriefingsPage(_props: PluginNavPanelProps) {
+/**
+ * Injected only into the in-app viewer's copy of a report (the report file
+ * itself stays script-free). The frame is sandboxed without same-origin, so
+ * this script can do nothing but ask the page to open an https link.
+ */
+const LINK_BRIDGE = `<script>document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(/^https:\\/\\//i.test(h)){e.preventDefault();parent.postMessage({type:"pr-briefings:open-url",href:h},"*")}},true)</script>`;
+
+export function withLinkBridge(html: string) {
+  const at = html.toLowerCase().lastIndexOf("</body>");
+  return at < 0 ? html + LINK_BRIDGE : html.slice(0, at) + LINK_BRIDGE + html.slice(at);
+}
+
+export const viewerSubPath = (url: string) => `view/${encodeURIComponent(url)}`;
+
+function BriefingViewer({ url }: { url: string }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [report, setReport] = useState<{ html: string; title: string; subject: string } | null>(null);
+  const [error, setError] = useState("");
+  const [record, setRecord] = useState<BriefingRecord | null>(null);
+  const [genuiAvailable, setGenuiAvailable] = useState(false);
+  useEffect(() => {
+    let live = true;
+    rpc.call("briefing_html", { url }).then(
+      (value) => live && setReport({ html: withLinkBridge(value.html), title: value.title, subject: value.subject }),
+      (cause) => live && setError(String(cause)),
+    );
+    rpc.call("snapshot").then(
+      (value) => {
+        if (!live) return;
+        setRecord(value.briefings.find((item) => item.url === url) ?? null);
+        setGenuiAvailable(value.genuiAvailable);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [rpc, url]);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!frame.current || event.source !== frame.current.contentWindow) return;
+      const data = event.data as { type?: unknown; href?: unknown } | null;
+      if (data?.type !== "pr-briefings:open-url" || typeof data.href !== "string") return;
+      if (/^https:\/\//i.test(data.href) && data.href.length <= 4096) navigate.openUrl(data.href);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [navigate]);
+  const back = () => navigate.toPluginPanel("briefings", { subPath: "" });
+  return (
+    <main className="pb-viewer">
+      <header className="pb-viewer-bar">
+        <Button size="sm" variant="ghost" onClick={back}>
+          <Icon name="ArrowLeft" className="size-4" />
+          Briefings
+        </Button>
+        <div className="pb-viewer-title">
+          <strong>{report?.title || record?.title || "Briefing"}</strong>
+          <span>{report?.subject || record?.subject}</span>
+        </div>
+        <div className="pb-viewer-actions">
+          <Button size="sm" variant="outline" onClick={() => navigate.openUrl(url)}>
+            <Icon name="GitPullRequest" className="size-4" />
+            Pull request
+          </Button>
+          {genuiAvailable && record?.bundle && record.head && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                navigate.toCompose({
+                  initialPrompt: genuiChatPrompt({ subject: record.subject || record.url, head: record.head!, bundle: record.bundle! }),
+                  focusPrompt: true,
+                })
+              }
+            >
+              <Icon name="MessageSquare" className="size-4" />
+              Discuss in chat
+            </Button>
+          )}
+          {record?.file && record.hostId && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                navigate.experimental_openFilePreview({
+                  target: { kind: "host", hostId: record.hostId!, path: record.file! },
+                  location: null,
+                })
+              }
+            >
+              <Icon name="FileText" className="size-4" />
+              Open as file
+            </Button>
+          )}
+        </div>
+      </header>
+      {error ? (
+        <div className="pb-alert" role="alert">
+          <Icon name="TriangleAlert" className="size-4" />
+          {error}
+        </div>
+      ) : !report ? (
+        <div className="pb-empty">Loading briefing…</div>
+      ) : (
+        <iframe ref={frame} className="pb-viewer-frame" title={`Briefing: ${report.title}`} sandbox="allow-scripts" srcDoc={report.html} />
+      )}
+    </main>
+  );
+}
+
+function BriefingsPage(props: PluginNavPanelProps) {
+  if (props.subPath.startsWith("view/")) {
+    let url = "";
+    try {
+      url = decodeURIComponent(props.subPath.slice("view/".length));
+    } catch {}
+    if (url) return <BriefingViewer url={url} />;
+  }
+  return <BriefingsList />;
+}
+
+function BriefingsList() {
   const { rpc, data, error, load } = useBriefings();
   const navigate = useBbNavigate();
   const [busyUrl, setBusyUrl] = useState("");
@@ -345,11 +469,7 @@ function BriefingsPage(_props: PluginNavPanelProps) {
   };
   const open = (record: BriefingRecord) => {
     if (!record.file || !record.hostId) return;
-    const accepted = navigate.experimental_openFilePreview({
-      target: { kind: "host", hostId: record.hostId, path: record.file },
-      location: null,
-    });
-    if (!accepted) setActionError("BB could not open this briefing preview.");
+    navigate.toPluginPanel("briefings", { subPath: viewerSubPath(record.url) });
   };
   const chatFor = (record?: BriefingRecord) =>
     data?.genuiAvailable && record?.bundle && record.head

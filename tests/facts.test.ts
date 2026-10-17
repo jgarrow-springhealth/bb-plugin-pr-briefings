@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 import {
   acceptanceRows,
+  codeExamples,
+  extractPrImages,
+  pairScreenshots,
+  sniffImage,
   areaBreakdown,
   buildFacts,
   keyHunk,
@@ -237,4 +241,63 @@ test("builds every fact without sources as unverified rather than missing", () =
   expect(facts.acceptance[0]).toMatchObject({ status: "untested" });
   expect(facts.files).toEqual([]);
   expect(facts.checks).toBeNull();
+});
+
+test("locates a model-chosen example in the diff and drops ones that aren't there", () => {
+  const parsed = parseUnifiedDiff(diff);
+  const [example, ...rest] = codeExamples(parsed, [
+    { path: "src/view.ts", quote: "structured()", caption: "Now renders structure" },
+    { path: "src/view.ts", quote: "not in the diff()", caption: "x" },
+    { path: "missing.ts", quote: "structured()", caption: "x" },
+  ]);
+  expect(rest).toEqual([]);
+  expect(example).toMatchObject({ path: "src/view.ts", caption: "Now renders structure", fileAdditions: 1, fileDeletions: 1 });
+  expect(example!.patch.split("\n").slice(2)).toEqual(["@@ -1,3 +1,3 @@", " const a = 1;", "-const b = legacy();", "+const b = structured();", " return b;"]);
+  expect(example!.focus).toBe(2);
+});
+
+test("finds screenshot attachments and pairs Before/After tables and labels", () => {
+  const signed = (id: string) => `https://private-user-images.githubusercontent.com/1/${id}.png?jwt=abc&amp;x=1`;
+  const html = `<p>Fixes the header.</p>
+<table><thead><tr><th>Before</th><th>After</th></tr></thead><tbody>
+<tr><td><a href="x"><img src="${signed("a")}" alt="image"></a></td><td><img src="${signed("b")}" alt="image"></td></tr>
+</tbody></table>
+<p>Dark mode before:</p><img src="https://github.com/user-attachments/assets/c1" alt="dark">
+<p>and after:</p><img src="https://github.com/user-attachments/assets/c2" alt="dark">
+<img src="https://img.shields.io/badge/x" alt="badge"><img src="https://avatars.githubusercontent.com/u/1" alt="me">
+<img src="http://github.com/user-attachments/assets/insecure" alt="x">`;
+  const images = extractPrImages(html, "PR description", "github.com");
+  expect(images.map((image) => [image.role, image.src.split("/").pop()])).toEqual([
+    ["before", "a.png?jwt=abc&x=1"],
+    ["after", "b.png?jwt=abc&x=1"],
+    ["before", "c1"],
+    ["after", "c2"],
+  ]);
+  const items = pairScreenshots(images);
+  expect(items.map((item) => item.kind)).toEqual(["pair", "pair"]);
+  expect(pairScreenshots([{ ...images[0]!, role: null, group: null }])[0]).toMatchObject({ kind: "single" });
+});
+
+test("accepts only real raster images by their bytes", () => {
+  expect(sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])) ).toMatchObject({ mime: "image/png" });
+  expect(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toMatchObject({ mime: "image/jpeg" });
+  expect(sniffImage(Buffer.from('<svg onload="x()"></svg>'))).toBeNull();
+  expect(sniffImage(Buffer.from("<html>"))).toBeNull();
+});
+
+test("counts screen recordings without embedding them and labels images from nearby text", () => {
+  const html = `<p><a href="https://x?jwt=a.b"><img src="https://private-user-images.githubusercontent.com/1/a.png?jwt=1" alt="image"></a></p>
+<p>Verified the new links on each row.</p><img src="https://private-user-images.githubusercontent.com/1/b.png?jwt=2" alt="image">
+<video src="https://private-user-images.githubusercontent.com/1/c.mp4?jwt=3"></video>`;
+  const images = extractPrImages(html, "PR description", "github.com");
+  expect(images.map((image) => image.kind ?? "image")).toEqual(["image", "image", "video"]);
+  expect(images[1]!.label).toBe("Verified the new links on each row.");
+  expect(images[0]!.label).not.toContain("jwt");
+  expect(pairScreenshots(images).every((item) => item.kind === "single")).toBe(true);
+  expect(pairScreenshots(images)).toHaveLength(2);
+});
+
+test("matches example quotes copied with the diff's +/- prefix", () => {
+  const [example] = codeExamples(parseUnifiedDiff(diff), [{ path: "src/view.ts", quote: "+const b = structured();", caption: "c" }]);
+  expect(example?.focus).toBe(2);
 });

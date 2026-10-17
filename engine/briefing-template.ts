@@ -35,6 +35,8 @@ const Impact = z
     id: ImpactId.optional(),
     /** Impacts this one is reached through or depends on; draws the impact graph. */
     dependsOn: z.array(ImpactId).max(12).optional(),
+    /** Short label for how this impact uses the ones in dependsOn (edge label). */
+    relation: Copy(60).optional(),
     name: Copy(120),
     kind: z.enum([
       "product surface",
@@ -90,6 +92,19 @@ export const BriefingDocument = z
         beforeEvidence: EvidenceList.min(1).max(4),
         after: Copy(1200),
         afterEvidence: EvidenceList.min(1).max(4),
+        /** Hunks that best show the change, located in the diff by an exact line. */
+        examples: z
+          .array(
+            z
+              .object({
+                path: RepositoryPath,
+                quote: Copy(200),
+                caption: Copy(240),
+              })
+              .strict(),
+          )
+          .max(3)
+          .optional(),
       })
       .strict(),
     impacts: z
@@ -114,6 +129,8 @@ export const BriefingDocument = z
             level: z.enum(["note", "watch", "risk"]),
             title: Copy(140),
             detail: Copy(700),
+            /** What a reviewer can do to confirm or rule this out. */
+            check: Copy(300).optional(),
             evidence: EvidenceList,
           })
           .strict(),

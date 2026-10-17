@@ -562,6 +562,198 @@ export function codeExcerpts(
   return out;
 }
 
+// ── Model-chosen code examples ──────────────────────────────────────────────
+
+export interface CodeExample {
+  path: string;
+  caption: string;
+  /** A unified patch of one hunk window around the quoted line. */
+  patch: string;
+  /** Index (0-based) of the quoted line within the patch body (after headers). */
+  focus: number;
+  fileAdditions: number;
+  fileDeletions: number;
+}
+
+/**
+ * Locates each example's quoted line in the PR diff and returns that hunk,
+ * trimmed to a window around the line. Examples whose file or line is not in
+ * the diff are dropped: the model cannot show code that is not there.
+ */
+export function codeExamples(
+  files: DiffFile[],
+  examples: ReadonlyArray<{ path: string; quote: string; caption: string }>,
+  radius = 7,
+): CodeExample[] {
+  const out: CodeExample[] = [];
+  for (const example of examples) {
+    const file = files.find((entry) => entry.path === example.path);
+    // Models sometimes copy the diff's own "+"/"-" prefix with the line, so
+    // the quote is tried as written and without that prefix.
+    const needles = [normalize(example.quote), normalize(example.quote.replace(/^\s*[+-]/, ""))].filter(Boolean);
+    if (!file || !needles.length) continue;
+    for (const hunk of file.hunks) {
+      const index = hunk.lines.findIndex((line) => /^[ +-]/.test(line) && needles.some((needle) => normalize(line.slice(1)).includes(needle)));
+      if (index < 0) continue;
+      const from = Math.max(0, index - radius);
+      const to = Math.min(hunk.lines.length, index + radius + 1);
+      let oldLine = hunk.oldStart;
+      let newLine = hunk.newStart;
+      for (const line of hunk.lines.slice(0, from)) {
+        if (!line.startsWith("+")) oldLine++;
+        if (!line.startsWith("-")) newLine++;
+      }
+      const window = hunk.lines.slice(from, to);
+      const oldCount = window.filter((line) => !line.startsWith("+")).length;
+      const newCount = window.filter((line) => !line.startsWith("-")).length;
+      out.push({
+        path: file.path,
+        caption: example.caption,
+        patch: [
+          `--- ${file.status === "added" ? "/dev/null" : `a/${file.oldPath ?? file.path}`}`,
+          `+++ ${file.status === "deleted" ? "/dev/null" : `b/${file.path}`}`,
+          `@@ -${oldLine},${oldCount} +${newLine},${newCount} @@`,
+          ...window,
+        ].join("\n"),
+        focus: index - from,
+        fileAdditions: file.additions,
+        fileDeletions: file.deletions,
+      });
+      break;
+    }
+  }
+  return out;
+}
+
+// ── Screenshots from the PR conversation ────────────────────────────────────
+
+export interface PrImage {
+  /** Screen recordings are counted and linked, never embedded. */
+  kind?: "image" | "video";
+  src: string;
+  alt: string;
+  role: "before" | "after" | null;
+  /** Images in the same table row share a group. */
+  group: string | null;
+  label: string;
+  source: string;
+}
+
+const strip = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+const attr = (tag: string, name: string) =>
+  (new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`, "i").exec(tag)?.[1] ?? "").replace(/&amp;/g, "&");
+const roleOf = (text: string): PrImage["role"] =>
+  /\b(after|new|updated|fixed|now)\b/i.test(text) ? "after" : /\b(before|old|previous|current|original|was)\b/i.test(text) ? "before" : null;
+
+/** Screenshot attachments only: pasted images, never badges, avatars, or external sites. */
+export function isAttachmentImage(src: string, host: string) {
+  try {
+    const url = new URL(src);
+    if (url.protocol !== "https:") return false;
+    if (url.hostname === "private-user-images.githubusercontent.com" || url.hostname === "user-images.githubusercontent.com") return true;
+    return (url.hostname === "github.com" || url.hostname === host) && url.pathname.startsWith("/user-attachments/assets/");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Finds screenshot attachments in GitHub-rendered HTML (a PR body or comment)
+ * and labels them before/after from table headers, alt text, or the nearest
+ * preceding text.
+ */
+export function extractPrImages(html: string, source: string, host: string): PrImage[] {
+  const images: PrImage[] = [];
+  let tableIndex = 0;
+  const rest = html.replace(/<table\b[\s\S]*?<\/table>/gi, (table) => {
+    const t = tableIndex++;
+    const headers = [...table.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => strip(m[1]!));
+    [...table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].forEach((row, r) => {
+      const cells = [...row[1]!.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1]!);
+      const rowLabel = cells.map(strip).find((text) => text && !roleOf(text)) ?? "";
+      cells.forEach((cell, c) => {
+        for (const img of cell.matchAll(/<img\b[^>]*>/gi)) {
+          const src = attr(img[0], "src");
+          if (!isAttachmentImage(src, host)) continue;
+          const alt = attr(img[0], "alt");
+          images.push({
+            src,
+            alt,
+            role: roleOf(headers[c] ?? "") ?? roleOf(alt),
+            group: `t${t}r${r}`,
+            label: rowLabel || headers.filter((h) => !roleOf(h)).join(" · ") || (alt && !/^image$/i.test(alt) ? alt : ""),
+            source,
+          });
+        }
+      });
+    });
+    return " ";
+  });
+  for (const img of rest.matchAll(/<img\b[^>]*>|<video\b[^>]*>/gi)) {
+    const src = attr(img[0], "src");
+    if (!isAttachmentImage(src, host)) continue;
+    const alt = attr(img[0], "alt");
+    // Strip from the start so a window never begins inside a tag.
+    const before = strip(rest.slice(0, img.index)).slice(-120);
+    if (/^<video/i.test(img[0])) {
+      images.push({ kind: "video", src, alt, role: null, group: null, label: "", source });
+      continue;
+    }
+    const context = before.split(/[.:!?]\s/).at(-1) ?? before;
+    images.push({ src, alt, role: roleOf(alt) ?? roleOf(context.slice(-40)), group: null, label: alt && !/^image$/i.test(alt) ? alt : context.slice(-80), source });
+  }
+  return images;
+}
+
+export type ScreenshotItem =
+  | { kind: "pair"; label: string; source: string; before: PrImage; after: PrImage }
+  | { kind: "single"; label: string; source: string; image: PrImage };
+
+/** Pairs before/after images (same table row, or a before followed by an after). */
+export function pairScreenshots(all: PrImage[]): ScreenshotItem[] {
+  const images = all.filter((image) => image.kind !== "video");
+  const out: ScreenshotItem[] = [];
+  const used = new Set<PrImage>();
+  for (const image of images) {
+    if (used.has(image) || image.role !== "before") continue;
+    const partner = image.group
+      ? images.find((other) => other !== image && !used.has(other) && other.group === image.group && other.role === "after")
+      : images[images.indexOf(image) + 1]?.role === "after" && !images[images.indexOf(image) + 1]!.group
+        ? images[images.indexOf(image) + 1]
+        : undefined;
+    if (!partner) continue;
+    used.add(image).add(partner);
+    out.push({ kind: "pair", label: image.label || partner.label, source: image.source, before: image, after: partner });
+  }
+  for (const image of images)
+    if (!used.has(image)) out.push({ kind: "single", label: image.label || (image.role ? `${image.role[0]!.toUpperCase()}${image.role.slice(1)}` : ""), source: image.source, image });
+  return out;
+}
+
+/** A screenshot whose bytes were downloaded by the generator. */
+export type Screenshot =
+  | { kind: "pair"; label: string; source: string; before: VisualImage; after: VisualImage }
+  | { kind: "single"; label: string; source: string; image: VisualImage }
+  | { kind: "recording"; label: string; source: string };
+
+/** Recognizes PNG, JPEG, GIF, and WebP by their magic bytes. */
+export function sniffImage(bytes: Buffer): VisualImage | null {
+  if (bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { mime: "image/png", ext: "png", bytes };
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { mime: "image/jpeg", ext: "jpg", bytes };
+  if (bytes.length > 6 && /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString("latin1"))) return { mime: "image/gif", ext: "gif", bytes };
+  if (bytes.length > 12 && bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP") return { mime: "image/webp", ext: "webp", bytes };
+  return null;
+}
+
 // ── Verified vs claimed ─────────────────────────────────────────────────────
 
 export type AcceptanceStatus = "passed" | "failed" | "untested" | "claimed";
@@ -658,6 +850,10 @@ export interface BriefingFacts {
   checks: CheckRun[] | null;
   visuals: VisualPair[];
   keyHunk: KeyHunk | null;
+  /** Model-chosen hunks with captions, located in the diff. */
+  examples: CodeExample[];
+  /** Screenshots attached to the PR description or comments; null when not read. */
+  screenshots: Screenshot[] | null;
   excerpts: CodeExcerpt[];
   acceptance: AcceptanceRow[];
 }
@@ -677,6 +873,7 @@ export function buildFacts(options: {
   diff: string;
   sources?: (SourceReader & BinaryReader) | null;
   checks?: CheckRun[] | null;
+  screenshots?: Screenshot[] | null;
 }): BriefingFacts {
   const sources = options.sources ?? null;
   const reader = sources ?? NO_SOURCES;
@@ -692,6 +889,8 @@ export function buildFacts(options: {
     checks,
     visuals,
     keyHunk: keyHunk(files, after.map((item) => item.path)),
+    examples: codeExamples(files, options.document.behavior.examples ?? []),
+    screenshots: options.screenshots ?? null,
     excerpts: codeExcerpts([...after, ...allEvidence(document)], reader),
     acceptance: acceptanceRows({ document, checks, visuals }),
   };

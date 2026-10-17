@@ -23,6 +23,7 @@ import {
   type ResolvedEvidence,
   type VisualPair,
 } from "./facts.ts";
+import { SKETCH_FONT_FACE, SKETCH_STYLE, seedOf, sketchArrow, sketchBox, textWidth, wrapText, type SketchColor } from "./sketch.ts";
 
 const esc = (value: string | number) =>
   String(value).replace(
@@ -53,6 +54,7 @@ const ICON_PATHS: Record<string, string> = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
 };
 const icon = (name: string, className = "") =>
   `<svg class="i${className ? ` ${className}` : ""}" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[name] ?? ""}</svg>`;
@@ -120,79 +122,7 @@ function areaCaption(areas: AreaBreakdown) {
   return `<p class="caption">${parts.join("; ")}.</p>`;
 }
 
-/** Slice-largest treemap of changed lines, grouped by top-level directory. */
-function treemap(files: BriefingFacts["files"]) {
-  type Node = { name: string; size: number; children?: Node[] };
-  const groups = new Map<string, Map<string, number>>();
-  for (const file of files) {
-    const size = file.additions + file.deletions;
-    if (!size) continue;
-    const parts = file.path.split("/");
-    const top = parts.length > 1 ? parts[0]! : "(root)";
-    const second = parts.length > 2 ? parts[1]! : parts.at(-1)!;
-    const inner = groups.get(top) ?? new Map<string, number>();
-    inner.set(second, (inner.get(second) ?? 0) + size);
-    groups.set(top, inner);
-  }
-  const nodes: Node[] = [...groups].map(([name, inner]) => ({
-    name,
-    size: [...inner.values()].reduce((a, b) => a + b, 0),
-    children: [...inner].map(([child, size]) => ({ name: child, size })).sort((a, b) => b.size - a.size),
-  })).sort((a, b) => b.size - a.size);
-  if (nodes.length < 1 || files.length < 2) return "";
-  const total = nodes.reduce((sum, node) => sum + node.size, 0);
-  type Box = { x: number; y: number; w: number; h: number };
-  const slice = (items: Node[], box: Box, out: Array<{ node: Node; box: Box }>) => {
-    if (!items.length) return;
-    if (items.length === 1) return void out.push({ node: items[0]!, box });
-    const sum = items.reduce((a, b) => a + b.size, 0);
-    const share = items[0]!.size / sum;
-    if (box.w >= box.h * 1.4) {
-      out.push({ node: items[0]!, box: { ...box, w: box.w * share } });
-      slice(items.slice(1), { ...box, x: box.x + box.w * share, w: box.w * (1 - share) }, out);
-    } else {
-      out.push({ node: items[0]!, box: { ...box, h: box.h * share } });
-      slice(items.slice(1), { ...box, y: box.y + box.h * share, h: box.h * (1 - share) }, out);
-    }
-  };
-  // Lay out in pseudo-pixels (the container is about 2.4:1), emit percentages.
-  const W = 240;
-  const H = 100;
-  const outer: Array<{ node: Node; box: Box }> = [];
-  slice(nodes, { x: 0, y: 0, w: W, h: H }, outer);
-  const pct = (value: number) => `${((value / total) * 100).toFixed(value / total < 0.1 ? 1 : 0)}%`;
-  const style = (box: Box, w: number, h: number) =>
-    `left:${((box.x / w) * 100).toFixed(2)}%;top:${((box.y / h) * 100).toFixed(2)}%;width:${((box.w / w) * 100).toFixed(2)}%;height:${((box.h / h) * 100).toFixed(2)}%`;
-  const cells = outer
-    .map(({ node, box }, index) => {
-      const inner: Array<{ node: Node; box: Box }> = [];
-      slice(node.children ?? [], { x: 0, y: 0, w: box.w, h: Math.max(box.h - 8, 1) }, inner);
-      return `<div class="tm-group tm-c${index % 5}" style="${style(box, W, H)}" title="${esc(`${node.name} · ${fmt(node.size)} lines`)}"><div class="tm-head"><b>${esc(node.name)}</b> · ${fmt(node.size)} lines · ${pct(node.size)}</div><div class="tm-body">${inner
-        .map(({ node: child, box: childBox }) => `<div class="tm-cell" style="${style(childBox, box.w, Math.max(box.h - 8, 1))}" title="${esc(`${node.name}/${child.name} · ${fmt(child.size)} lines`)}"><b>${esc(child.name)}</b><span>${fmt(child.size)} lines · ${pct(child.size)}</span></div>`)
-        .join("")}</div></div>`;
-    })
-    .join("");
-  return `<div class="tm-meta"><b>All</b><span>${fmt(total)} lines · ${plural(files.filter((file) => file.additions + file.deletions).length, "file")}</span></div><div class="treemap" role="img" aria-label="Changed lines by directory">${cells}</div>`;
-}
-
 // ── Impact graph ────────────────────────────────────────────────────────────
-
-const wrap = (text: string, width: number, lines: number) => {
-  const out: string[] = [];
-  let current = "";
-  for (const word of text.split(/\s+/)) {
-    if ((current + " " + word).trim().length > width && current) {
-      out.push(current);
-      current = word;
-    } else current = (current + " " + word).trim();
-  }
-  if (current) out.push(current);
-  if (out.length > lines) {
-    out.length = lines;
-    out[lines - 1] = `${out[lines - 1]!.slice(0, width - 1)}…`;
-  }
-  return out;
-};
 
 export interface ImpactGraph {
   nodes: Array<{ id: string; name: string; kind: string; changed: boolean; depth: number; row: number }>;
@@ -211,6 +141,23 @@ export function impactGraph(
       .map((dep) => ({ from: dep, to: ids[index]! })),
   );
   if (!edges.length) return null;
+  // Transitive reduction for drawing: skip A→C when A→…→C already exists, so
+  // the diagram shows chains instead of bundles of long edges. Cards still
+  // list every dependency.
+  const reachable = (from: string, to: string, skip: { from: string; to: string }) => {
+    const seen = new Set<string>();
+    const stack = edges.filter((edge) => edge.from === from && edge !== skip).map((edge) => edge.to);
+    while (stack.length) {
+      const next = stack.pop()!;
+      if (next === to) return true;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      for (const edge of edges) if (edge.from === next) stack.push(edge.to);
+    }
+    return false;
+  };
+  const reduced = edges.filter((edge) => !reachable(edge.from, edge.to, edge));
+  edges.splice(0, edges.length, ...(reduced.length ? reduced : edges));
   const depth = new Map(ids.map((id) => [id, 0]));
   for (let pass = 0; pass < ids.length; pass++) {
     let changed = false;
@@ -233,47 +180,126 @@ export function impactGraph(
   return { nodes, edges: edges.filter((edge) => depth.get(edge.from)! < depth.get(edge.to)!) };
 }
 
-function impactGraphSvg(graph: ImpactGraph) {
-  const w = 180;
-  const h = 46;
-  const colGap = 90;
-  const rowGap = 22;
+function impactSketch(document: ResolvedDocument, graph: ImpactGraph) {
+  const w = 200;
+  const relationOf = new Map(document.impacts.map((item, index) => [item.id ?? `impact-${index + 1}`, (item.relation ?? "").slice(0, 26)]));
+  const longest = Math.max(0, ...graph.edges.map((edge) => textWidth(relationOf.get(edge.to) ?? "", 13)));
+  const colGap = Math.max(120, Math.min(260, longest + 90));
+  const rowGap = 34;
+  const pad = 14;
+  const labels = graph.nodes.map((node) => wrapText(node.name, 18, 3));
+  const heights = labels.map((lines) => 34 + lines.length * 19);
   const columns = Math.max(...graph.nodes.map((node) => node.depth)) + 1;
-  const tallest = Math.max(...[...Array(columns).keys()].map((depth) => graph.nodes.filter((node) => node.depth === depth).length));
-  const height = 16 + tallest * (h + rowGap);
-  const pos = new Map(
-    graph.nodes.map((node) => {
-      const inColumn = graph.nodes.filter((other) => other.depth === node.depth).length;
-      const offset = (height - inColumn * (h + rowGap) + rowGap) / 2;
-      return [node.id, { x: 8 + node.depth * (w + colGap), y: offset + node.row * (h + rowGap) - 8 }];
-    }),
-  );
-  const width = 16 + columns * w + (columns - 1) * colGap;
+  const columnHeight = (depth: number) =>
+    graph.nodes.reduce((sum, node, index) => (node.depth === depth ? sum + heights[index]! + rowGap : sum), -rowGap);
+  const tallest = Math.max(...[...Array(columns).keys()].map(columnHeight));
+  const height = tallest + pad * 2 + 24;
+  const pos = new Map<string, { x: number; y: number; h: number; index: number }>();
+  for (let depth = 0; depth < columns; depth++) {
+    let y = pad + 24 + (tallest - columnHeight(depth)) / 2;
+    graph.nodes.forEach((node, index) => {
+      if (node.depth !== depth) return;
+      pos.set(node.id, { x: pad + depth * (w + colGap), y, h: heights[index]!, index });
+      y += heights[index]! + rowGap;
+    });
+  }
+  const width = pad * 2 + columns * w + (columns - 1) * colGap;
+  const linked = new Set(graph.edges.flatMap((edge) => [edge.from, edge.to]));
+  const labelled = new Set<string>();
+  // Fan outgoing edges across the source's right side (ordered by target
+  // height) so they don't bunch, and end each edge with a straight run that
+  // carries its label just before the arrowhead.
+  const outgoing = new Map<string, string[]>();
+  for (const edge of graph.edges) outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge.to]);
+  for (const [from, targets] of outgoing) targets.sort((p1, p2) => pos.get(p1)!.y - pos.get(p2)!.y), outgoing.set(from, targets);
   const edges = graph.edges
     .map((edge) => {
       const a = pos.get(edge.from)!;
       const b = pos.get(edge.to)!;
-      const x1 = a.x + w;
-      const y1 = a.y + h / 2;
-      const x2 = b.x - 4;
-      const y2 = b.y + h / 2;
-      return `<path d="M${x1},${y1} C${x1 + colGap / 2},${y1} ${x2 - colGap / 2},${y2} ${x2},${y2}" class="edge" marker-end="url(#arrow)"/>`;
+      const siblings = outgoing.get(edge.from)!;
+      const slot = siblings.indexOf(edge.to);
+      const x1 = a.x + w + 2;
+      const y1 = a.y + (a.h * (slot + 1)) / (siblings.length + 1);
+      const x2 = b.x - 6;
+      const y2 = b.y + b.h / 2;
+      const span = graph.nodes.find((n) => n.id === edge.to)!.depth - graph.nodes.find((n) => n.id === edge.from)!.depth;
+      const label = labelled.has(edge.to) ? "" : (relationOf.get(edge.to) ?? "");
+      if (label) labelled.add(edge.to);
+      const run = Math.max(28, textWidth(label, 13) + 40);
+      const points: Array<[number, number]> =
+        span > 1
+          ? [[x1, y1], [x1 + 30, pad + 10], [x2 - run, pad + 10], [x2 - run, y2], [x2, y2]]
+          : [[x1, y1], [x1 + Math.min(40, (x2 - run - x1) / 2), y1], [x2 - run, y2], [x2, y2]];
+      const lx = x2 - (run - 24) / 2 - 8;
+      const ly = y2 - 7;
+      const labelSvg = label
+        ? `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" class="sk-edge-label">${esc(label)}</text>`
+        : "";
+      return `<g class="sk-edge">${sketchArrow(points, seedOf(`${edge.from}>${edge.to}`))}${labelSvg}</g>`;
     })
     .join("");
   const nodes = graph.nodes
-    .map((node) => {
-      const { x, y } = pos.get(node.id)!;
-      const lines = wrap(node.name, 24, 2);
-      const first = y + h / 2 - (lines.length - 1) * 7.5 + 4;
-      return `<g><title>${esc(`${node.name} · ${node.kind}${node.changed ? " · changed by this PR" : ""}`)}</title><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" class="node${node.changed ? " changed" : ""}"/>${lines
-        .map((line, index) => `<text x="${x + w / 2}" y="${first + index * 15}" text-anchor="middle" class="node-label">${esc(line)}</text>`)
+    .map((node, index) => {
+      const { x, y, h } = pos.get(node.id)!;
+      const color = node.changed ? "yellow" : linked.has(node.id) ? "blue" : "gray";
+      const lines = labels[index]!;
+      const first = y + h / 2 - ((lines.length - 1) * 19) / 2 + 6;
+      return `<g class="sk-node ${color}"><a href="#impact-${index + 1}" aria-label="${esc(node.name)}: details"><title>${esc(`${node.name} · ${node.kind}${node.changed ? " · changed by this PR" : ""}`)}</title>${sketchBox(x, y, w, h, seedOf(node.id), { strokeWidth: node.changed ? 2.4 : 1.6 })}${lines
+        .map((line, li) => `<text x="${x + w / 2}" y="${(first + li * 19).toFixed(1)}" text-anchor="middle" font-size="16">${esc(line)}</text>`)
+        .join("")}</a></g>`;
+    })
+    .join("");
+  return `<figure class="sketch-figure"><svg class="sketch" viewBox="0 0 ${width} ${height}" style="max-width:${width}px" role="img" aria-label="Impact graph">${edges}${nodes}</svg><figcaption class="legend">${swatch("yellow")}Changed by this PR ${swatch("blue")}Affected by the change ${graph.nodes.some((node) => !linked.has(node.id)) ? `${swatch("gray")}Not linked ` : ""}<span class="muted">· Select a box to jump to its details.</span></figcaption></figure>`;
+}
+const swatch = (color: SketchColor) => `<svg class="swatch" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" class="sk-solid ${color} sk-swatch"/></svg>`;
+
+function flowSketch(flow: ResolvedDocument["flows"][number], flowIndex: number) {
+  const w = 168;
+  const gap = 58;
+  const perRow = 4;
+  const pad = 10;
+  const labels = flow.steps.map((step, index) => wrapText(`${index + 1}. ${step.label}`, 17, 3));
+  const h = 34 + Math.max(...labels.map((lines) => lines.length)) * 18;
+  const rows = Math.ceil(flow.steps.length / perRow);
+  const cols = Math.min(perRow, flow.steps.length);
+  const width = pad * 2 + cols * w + (cols - 1) * gap;
+  const height = pad * 2 + rows * h + (rows - 1) * 46;
+  // Snake layout: odd rows run right-to-left so the path never jumps back.
+  const place = (index: number) => {
+    const row = Math.floor(index / perRow);
+    const col = index % perRow;
+    const x = pad + (row % 2 ? cols - 1 - col : col) * (w + gap);
+    return { x, y: pad + row * (h + 46), row };
+  };
+  const arrows = flow.steps
+    .slice(1)
+    .map((_, index) => {
+      const a = place(index);
+      const b = place(index + 1);
+      const seed = seedOf(`${flow.title}:${index}`);
+      if (a.row === b.row) {
+        const forward = b.x > a.x;
+        return sketchArrow([[forward ? a.x + w + 4 : a.x - 4, a.y + h / 2], [forward ? b.x - 6 : b.x + w + 6, b.y + h / 2]], seed);
+      }
+      return sketchArrow([[a.x + w / 2, a.y + h + 4], [a.x + w / 2 + 6, (a.y + h + b.y) / 2], [b.x + w / 2, b.y - 6]], seed);
+    })
+    .join("");
+  const boxes = flow.steps
+    .map((step, index) => {
+      const { x, y } = place(index);
+      const lines = labels[index]!;
+      const first = y + h / 2 - ((lines.length - 1) * 18) / 2 + 6;
+      return `<g class="sk-node ${step.changed ? "yellow" : "blue"}"><title>${esc(step.detail)}</title>${sketchBox(x, y, w, h, seedOf(`${flowIndex}:${step.label}`), { strokeWidth: step.changed ? 2.4 : 1.6 })}${lines
+        .map((line, li) => `<text x="${x + w / 2}" y="${(first + li * 18).toFixed(1)}" text-anchor="middle" font-size="16">${esc(line)}</text>`)
         .join("")}</g>`;
     })
     .join("");
-  return `<figure class="diagram"><svg viewBox="0 0 ${width} ${height}" style="max-width:${width}px" role="img" aria-label="Impact graph"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>${edges}${nodes}</svg></figure>`;
+  return `<svg class="sketch" viewBox="0 0 ${width} ${height}" style="max-width:${width}px" role="img" aria-label="${esc(flow.title)}">${arrows}${boxes}</svg>`;
 }
 
 // ── Tab contents ────────────────────────────────────────────────────────────
+
+const intro = (title: string, body: string) => `<div class="explain">${icon("info")}<div><b>${title}</b><p>${body}</p></div></div>`;
 
 function overview(document: ResolvedDocument, facts: BriefingFacts) {
   const rows = document.summary
@@ -282,17 +308,17 @@ function overview(document: ResolvedDocument, facts: BriefingFacts) {
       return `<li class="row"><span class="tile">${icon(KIND_ICON[item.kind] ?? "info")}</span><span class="row-main"><b>${esc(item.claim)}</b>${where ? `<span class="muted mono">${esc(where)}</span>` : ""}</span>${badge(item.kind === "compatibility" ? "compat" : item.kind, KIND_TONE[item.kind])}</li>`;
     })
     .join("");
-  return `<ul class="list">${rows}</ul>${facts.areas.labels.length ? areaChart(facts.areas) + areaCaption(facts.areas) : ""}`;
+  return `<ul class="list">${rows}</ul>${facts.areas.labels.length ? `<h3 class="sec">Where the lines changed</h3>${areaChart(facts.areas)}${areaCaption(facts.areas)}` : ""}`;
 }
 
-function diffBlock(patch: string, path: string) {
-  const lines = patch.split("\n");
-  const header = lines.slice(2);
+function diffBlock(patch: string, path: string, options: { focus?: number; counts?: { added: number; removed: number } } = {}) {
+  const lines = patch.split("\n").slice(2);
   let oldLine = 0;
   let newLine = 0;
-  const added = header.filter((line) => line.startsWith("+")).length;
-  const removed = header.filter((line) => line.startsWith("-")).length;
-  const rows = header
+  let bodyIndex = -1;
+  const added = options.counts?.added ?? lines.filter((line) => line.startsWith("+")).length;
+  const removed = options.counts?.removed ?? lines.filter((line) => line.startsWith("-")).length;
+  const rows = lines
     .map((line) => {
       const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
       if (hunk) {
@@ -300,29 +326,68 @@ function diffBlock(patch: string, path: string) {
         newLine = Number(hunk[2]);
         return "";
       }
+      bodyIndex++;
       const kind = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx";
-      const number = kind === "del" ? oldLine++ : kind === "add" ? newLine++ : (oldLine++, newLine++);
-      return `<span class="dl dl-${kind}"><span class="ln">${number}</span>${esc(line.slice(1)) || " "}</span>`;
+      const sign = kind === "add" ? "+" : kind === "del" ? "−" : " ";
+      // Two number columns, like GitHub: the line before and after the change.
+      const before = kind === "add" ? "" : String(oldLine++);
+      const after = kind === "del" ? "" : String(newLine++);
+      return `<span class="dl dl-${kind}${bodyIndex === options.focus ? " dl-mark" : ""}"><span class="ln">${before}</span><span class="ln">${after}</span><span class="sign">${sign}</span>${esc(line.slice(1)) || " "}</span>`;
     })
     .join("");
-  return `<figure class="code"><figcaption><code>${esc(path)}</code> <span class="plus">+${added}</span> <span class="minus">−${removed}</span></figcaption><pre>${rows}</pre></figure>`;
+  return `<figure class="code"><figcaption><code>${esc(path)}</code> <span class="plus">+${added}</span> <span class="minus">−${removed}</span>${options.counts ? ' <span class="muted">in this file</span>' : ""}</figcaption><pre>${rows}</pre></figure>`;
 }
 
-const dataUri = (image: NonNullable<VisualPair["before"]>) => `data:${image.mime};base64,${image.bytes.toString("base64")}`;
-function visuals(pairs: VisualPair[]) {
-  if (!pairs.length) return "";
-  const changed = pairs.filter((pair) => !pair.identical).length;
-  return `<p><b>What it looks like</b> — ${plural(pairs.length, "image")} rendered at base and head${changed ? `; ${changed} changed` : "; all identical"}.</p>${pairs
-    .map(
-      (pair) => `<div class="compare"><div class="compare-head"><span class="pill"><span class="muted">Reference</span> Base</span><span class="pill"><span class="muted">Compared</span> Head</span></div><p class="muted mono">${esc(pair.label)} ${pair.identical ? badge("identical", "good") : badge("changed", "warn")}</p><div class="compare-pair"><div>${pair.before ? `<img alt="Before: ${esc(pair.path)}" src="${dataUri(pair.before)}">` : '<span class="muted">Not present at base</span>'}</div><div>${pair.after ? `<img alt="After: ${esc(pair.path)}" src="${dataUri(pair.after)}">` : '<span class="muted">Removed at head</span>'}</div></div></div>`,
-    )
-    .join("")}`;
+const dataUri = (image: { mime: string; bytes: Buffer }) => `data:${image.mime};base64,${image.bytes.toString("base64")}`;
+
+function screenshots(shots: BriefingFacts["screenshots"], visualsList: VisualPair[], prUrl: string) {
+  const parts: string[] = [];
+  if (shots === null) parts.push(`<p class="muted">The PR description and comments could not be read, so screenshots are not shown.</p>`);
+  else if (!shots.length)
+    parts.push(
+      `<div class="empty">${icon("image")}<div><b>No screenshots on this PR</b><p class="muted">Screenshots attached to the PR description or its comments show up here, side by side when they're labeled Before and After (for example, a two-column Before | After table).</p></div></div>`,
+    );
+  else
+    for (const shot of shots) {
+      if (shot.kind === "recording") {
+        parts.push(`<div class="empty recording">${icon("play")}<div><b>Screen recording in the ${esc(shot.source)}</b><p class="muted">Recordings aren't embedded in briefings. <a href="${esc(prUrl)}" target="_blank" rel="noreferrer">Open the pull request</a> to watch it.</p></div></div>`);
+        continue;
+      }
+      const caption = `${shot.label ? `<b>${esc(shot.label)}</b> · ` : ""}<span class="muted">from the ${esc(shot.source)}</span>`;
+      parts.push(
+        shot.kind === "pair"
+          ? `<figure class="shot"><figcaption>${caption}</figcaption><div class="shot-pair"><div><span class="shot-tag before">Before</span><img alt="Before: ${esc(shot.label)}" src="${dataUri(shot.before)}"></div><div><span class="shot-tag after">After</span><img alt="After: ${esc(shot.label)}" src="${dataUri(shot.after)}"></div></div></figure>`
+          : `<figure class="shot"><figcaption>${caption}</figcaption><div class="shot-single"><img alt="${esc(shot.label || "Screenshot")}" src="${dataUri(shot.image)}"></div></figure>`,
+      );
+    }
+  if (visualsList.length)
+    parts.push(
+      `<p class="sub-label">Changed image files</p>${visualsList
+        .map(
+          (pair) => `<figure class="shot"><figcaption><code>${esc(pair.label)}</code> ${pair.identical ? badge("identical", "good") : badge("changed", "warn")}</figcaption><div class="shot-pair"><div><span class="shot-tag before">Before</span>${pair.before ? `<img alt="Before: ${esc(pair.path)}" src="${dataUri(pair.before)}">` : '<span class="muted">Not in the base commit</span>'}</div><div><span class="shot-tag after">After</span>${pair.after ? `<img alt="After: ${esc(pair.path)}" src="${dataUri(pair.after)}">` : '<span class="muted">Removed by this PR</span>'}</div></div></figure>`,
+        )
+        .join("")}`,
+    );
+  return parts.join("");
 }
 
-function beforeAfter(document: ResolvedDocument, facts: BriefingFacts) {
-  return `<div class="cols"><div>${badge("Before", "bad")}<p>${esc(document.behavior.before)}</p>${evidenceLinks(document.behavior.beforeEvidence)}</div><div>${badge("After", "good")}<p>${esc(document.behavior.after)}</p>${evidenceLinks(document.behavior.afterEvidence)}</div></div>${
-    facts.keyHunk ? `<p><b>A typical change</b> — ${esc(facts.keyHunk.path.split("/").pop()!)}</p>${diffBlock(facts.keyHunk.patch, facts.keyHunk.path)}` : ""
-  }${visuals(facts.visuals)}`;
+function beforeAfter(document: ResolvedDocument, facts: BriefingFacts, prUrl: string) {
+  const evidenceCount = document.behavior.beforeEvidence.length + document.behavior.afterEvidence.length;
+  const code = facts.examples.length
+    ? facts.examples
+        .map(
+          (example) =>
+            `<figure class="example"><p><b>What to notice:</b> ${esc(example.caption)}</p>${diffBlock(example.patch, example.path, { focus: example.focus, counts: { added: example.fileAdditions, removed: example.fileDeletions } })}</figure>`,
+        )
+        .join("")
+    : facts.keyHunk
+      ? `<p class="muted">The model didn't point at specific lines, so this is one changed hunk from a file it cited.</p>${diffBlock(facts.keyHunk.patch, facts.keyHunk.path)}`
+      : `<p class="muted">No code example is available for this PR.</p>`;
+  return `<p class="muted">What this PR changes, three ways: in words, in the code, and on screen.</p><h3 class="sec">In words</h3><div class="cols"><div class="side before"><span class="side-tag">Before this PR</span><p>${esc(document.behavior.before)}</p></div><div class="side after"><span class="side-tag">After this PR</span><p>${esc(document.behavior.after)}</p></div></div><h3 class="sec">In the code</h3>${code}<h3 class="sec">On screen</h3>${screenshots(facts.screenshots, facts.visuals, prUrl)}${
+    evidenceCount
+      ? `<details class="disclosure"><summary>${icon("chevron", "chev")}Evidence for this comparison <span class="muted">· ${plural(evidenceCount, "citation")}</span></summary><div class="disclosure-body cols"><div><p class="sub-label">Before</p>${evidenceLinks(document.behavior.beforeEvidence)}</div><div><p class="sub-label">After</p>${evidenceLinks(document.behavior.afterEvidence)}</div></div></details>`
+      : ""
+  }`;
 }
 
 function excerptBlock(excerpt: CodeExcerpt) {
@@ -330,59 +395,73 @@ function excerptBlock(excerpt: CodeExcerpt) {
     .split("\n")
     .map((line, index) => {
       const number = excerpt.from + index;
-      return `<span class="dl${number === excerpt.focus ? " dl-focus" : ""}"><span class="ln">${number}</span>${esc(line) || " "}</span>`;
+      return `<span class="dl${number === excerpt.focus ? " dl-mark" : ""}"><span class="ln">${number}</span>${esc(line) || " "}</span>`;
     })
     .join("");
   return `<figure class="code"><figcaption><a href="${esc(excerpt.url)}" target="_blank" rel="noreferrer"><code>${esc(excerpt.path)}:${excerpt.focus}</code></a> <span class="muted">· ${excerpt.side === "base" ? "before" : "after"} · ${esc(excerpt.note)}</span></figcaption><pre>${lines}</pre></figure>`;
 }
 
-function impactAndFlow(document: ResolvedDocument, facts: BriefingFacts) {
-  const graph = impactGraph(document.impacts);
-  const impacts = document.impacts
-    .map(
-      (item) =>
-        `<details class="disclosure"><summary>${icon("chevron", "chev")}<b>${esc(item.name)}</b>${item.changed ? badge("changed by this PR", "info") : ""}<span class="muted">${esc(item.kind)}</span></summary><div class="disclosure-body"><p>${esc(item.change)}</p>${evidenceLinks(item.evidence)}</div></details>`,
-    )
-    .join("");
-  const flows = document.flows
-    .map(
-      (flow) =>
-        `<details class="disclosure"><summary>${icon("chevron", "chev")}Flow: ${esc(flow.title)}</summary><div class="disclosure-body"><ol class="steps">${flow.steps
-          .map((step) => `<li class="${step.changed ? "current" : ""}"><b>${esc(step.label)}</b>${step.changed ? ` ${badge("changed", "info")}` : ""}<span class="muted">${esc(step.detail)}</span></li>`)
-          .join("")}</ol></div></details>`,
-    )
-    .join("");
-  const excerpts = facts.excerpts.length
-    ? `<details class="disclosure"><summary>${icon("chevron", "chev")}Key code · ${plural(facts.excerpts.length, "excerpt")}</summary><div class="disclosure-body">${facts.excerpts.map(excerptBlock).join("")}</div></details>`
-    : "";
-  return `${graph ? impactGraphSvg(graph) + '<p class="hint">Open an impact below to see what changes there and its evidence.</p>' : ""}<div class="group">${impacts}</div>${treemap(facts.files)}<div class="group">${flows}${excerpts}</div>`;
+function dependsLine(document: ResolvedDocument, item: ResolvedDocument["impacts"][number]) {
+  const names = (item.dependsOn ?? [])
+    .map((id) => document.impacts.find((other, index) => (other.id ?? `impact-${index + 1}`) === id)?.name)
+    .filter((name): name is string => !!name);
+  if (!names.length) return "";
+  return `<p class="depends"><span class="muted">Depends on</span> ${names.map((name) => `<b>${esc(name)}</b>`).join(", ")}${item.relation ? ` <span class="muted">— ${esc(item.relation)}</span>` : ""}</p>`;
 }
 
-const ACCEPT_WORD: Record<AcceptanceRow["status"], string> = { passed: "Passed", failed: "Failed", untested: "Not tested", claimed: "Only claimed" };
-function verified(rows: AcceptanceRow[], checks: CheckRun[] | null) {
-  const count = (status: AcceptanceRow["status"]) => rows.filter((row) => row.status === status).length;
-  const passed = count("passed");
-  const done = passed === rows.length;
-  const segments = (["passed", "claimed", "untested", "failed"] as const)
-    .filter((status) => count(status))
-    .map((status) => `<span class="seg seg-${status}" style="flex:${count(status)}"></span>`)
+function impactAndFlow(document: ResolvedDocument) {
+  const graph = impactGraph(document.impacts);
+  const changed = document.impacts.filter((item) => item.changed).length;
+  const linked = new Set(graph?.edges.flatMap((edge) => [edge.from, edge.to]) ?? []);
+  const cards = document.impacts
+    .map((item, index) => {
+      const id = item.id ?? `impact-${index + 1}`;
+      const role = item.changed ? badge("Changed by this PR", "warn") : linked.has(id) ? badge("Affected", "info") : badge("Related");
+      const shown = item.evidence.slice(0, 3);
+      return `<article class="impact" id="impact-${index + 1}"><div class="impact-head">${role}<span class="muted">${esc(item.kind)}</span></div><h4>${esc(item.name)}</h4><p>${esc(item.change)}</p>${dependsLine(document, item)}${shown.length ? `${evidenceLinks(shown)}${item.evidence.length > shown.length ? `<p class="muted">+${item.evidence.length - shown.length} more in Evidence</p>` : ""}` : ""}</article>`;
+    })
     .join("");
-  const needs = rows.filter((row) => row.needs);
-  const tally = [
-    count("failed") && `${icon("failed", "s-failed")} <b>${count("failed")}</b> failing`,
-    count("untested") && `${icon("untested", "s-untested")} <b>${count("untested")}</b> not tested`,
-    count("claimed") && `${icon("claimed", "s-claimed")} <b>${count("claimed")}</b> only claimed`,
-  ].filter(Boolean);
-  return `<p class="muted">What this briefing verified vs. what it only claims</p><h3 class="verdict">${done ? '<span class="t-good">Verified:</span>' : '<span class="t-bad">Not done:</span>'} ${passed} of ${plural(rows.length, "criterion").replace(/criterions$/, "criteria")} proven</h3>${tally.length ? `<p class="tally">${tally.join(" ")}</p>` : ""}<div class="segbar">${segments}</div>${
-    needs.length
-      ? `<div class="needs"><p class="needs-title">${icon("user")} Needs you</p>${needs.map((row) => `<p><b>${esc(row.needs!)}</b><span class="muted">${esc(row.name)}</span></p>`).join("")}</div>`
-      : ""
-  }<ul class="list accept">${rows
-    .map(
-      (row) =>
-        `<li class="row">${icon(row.status, `s-${row.status}`)}<span class="row-main"><b>${esc(row.name)}</b>${row.note ? `<span class="muted">${esc(row.note)}</span>` : ""}${row.needs ? `<span class="t-warn">Needs you: ${esc(row.needs)}</span>` : ""}</span><span class="row-side"><b class="st-${row.status}">${ACCEPT_WORD[row.status]}</b><span class="muted">${row.status === "claimed" ? "claimed by" : "by"} ${esc(row.by)}</span></span></li>`,
-    )
-    .join("")}</ul>${checksSection(checks)}`;
+  const flows = document.flows.length
+    ? document.flows
+        .map(
+          (flow, index) =>
+            `<section class="flow"><h4>${esc(flow.title)}</h4>${flowSketch(flow, index)}<ol class="flow-steps">${flow.steps
+              .map((step) => `<li${step.changed ? ' class="changed"' : ""}><b>${esc(step.label)}</b>${step.changed ? ` ${badge("changed", "warn")}` : ""} <span class="muted">${esc(step.detail)}</span></li>`)
+              .join("")}</ol></section>`,
+        )
+        .join("")
+    : `<p class="muted">This PR doesn't change how requests or data move through the system.</p>`;
+  return `<p class="muted">Who is affected by the change, and how information moves through it.</p><h3 class="sec">What this touches</h3><p>${changed ? `${plural(changed, "part")} changed directly` : "No single part is marked as the change"}${graph ? `; ${plural(linked.size - changed, "part")} depend on it` : ""}.</p>${graph ? impactSketch(document, graph) : ""}<div class="impacts">${cards}</div><h3 class="sec">How it flows</h3>${flows}`;
+}
+
+const ACCEPT_WORD: Record<AcceptanceRow["status"], string> = { passed: "Checked", failed: "Failed", untested: "Needs you", claimed: "Model's claim" };
+function acceptRow(row: AcceptanceRow, extra = "") {
+  return `<li class="row">${icon(row.status, `s-${row.status}`)}<span class="row-main"><b>${esc(row.name)}</b>${row.note ? `<span class="muted">${esc(row.note)}</span>` : ""}${row.needs ? `<span class="t-warn">${esc(row.needs)}</span>` : ""}${extra}</span><span class="row-side"><b class="st-${row.status}">${ACCEPT_WORD[row.status]}</b><span class="muted">by ${esc(row.by)}</span></span></li>`;
+}
+function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: ResolvedEvidence[]) {
+  const checked = rows.filter((row) => row.status === "passed" || row.status === "failed");
+  const needs = rows.filter((row) => row.status === "untested");
+  const claims = rows.filter((row) => row.status === "claimed");
+  const count = (status: AcceptanceRow["status"]) => rows.filter((row) => row.status === status).length;
+  const segments = (["passed", "failed", "untested", "claimed"] as const)
+    .filter((status) => count(status))
+    .map((status) => `<span class="seg seg-${status}" style="flex:${count(status)}" title="${ACCEPT_WORD[status]}: ${count(status)}"></span>`)
+    .join("");
+  const missing = references.filter((item) => item.status === "unresolved");
+  const missingList = missing.length
+    ? `<details class="disclosure inline"><summary>${icon("chevron", "chev")}Show the ${plural(missing.length, "citation")} not found</summary><div class="disclosure-body">${evidenceLinks(missing)}</div></details>`
+    : "";
+  const section = (title: string, hint: string, list: AcceptanceRow[]) =>
+    list.length ? `<h3 class="sec">${title} <span class="muted">· ${list.length}</span></h3><p class="muted">${hint}</p><ul class="list accept">${list.map((row) => acceptRow(row, row.name === "Quoted citations match the code" ? missingList : "")).join("")}</ul>` : "";
+  return `${intro("What this tab is for", "An AI model wrote this briefing. PR Briefings double-checked some of it on its own, against the real code and GitHub. The rest is only the model's word, so it's listed here as things to confirm while you review.")}<p class="summary-line"><b>${checked.filter((row) => row.status === "passed").length}</b> checked${count("failed") ? ` · <b class="t-bad">${count("failed")}</b> failed` : ""} · <b>${needs.length}</b> need you · <b>${claims.length}</b> to confirm yourself</p><div class="segbar">${segments}</div><p class="key">${icon("passed", "s-passed")}<b>Checked</b> PR Briefings confirmed it ${icon("failed", "s-failed")}<b>Failed</b> a check disagreed ${icon("untested", "s-untested")}<b>Needs you</b> only a person can confirm it ${icon("claimed", "s-claimed")}<b>Model's claim</b> not checked</p>${section(
+    "Checked automatically",
+    "PR Briefings ran these checks itself while generating the briefing.",
+    checked,
+  )}${section("Needs you", "These can only be confirmed by a person, for example by looking at the running app.", needs)}${section(
+    "The model's claims to confirm",
+    "The model says these stay true. Nothing checked them, so keep an eye on them as you read the diff.",
+    claims,
+  )}${checksSection(checks)}`;
 }
 
 const BUCKET_WORD: Record<CheckRun["bucket"], string> = { pass: "passed", fail: "failed", pending: "pending", skipping: "skipped", cancel: "cancelled" };
@@ -394,71 +473,56 @@ function duration(checks: CheckRun[]) {
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
 }
 function checksSection(checks: CheckRun[] | null) {
-  if (!checks) return `<h3 class="sub">${icon("untested", "s-untested")} Checks</h3><p class="muted">Check runs could not be read for this head.</p>`;
-  if (!checks.length) return `<h3 class="sub">${icon("untested", "s-untested")} Checks</h3><p class="muted">No check runs were reported for this head.</p>`;
+  const head = `<h3 class="sec">CI checks on this commit</h3>`;
+  if (!checks) return `${head}<p class="muted">GitHub check runs could not be read for this commit.</p>`;
+  if (!checks.length) return `${head}<p class="muted">GitHub reported no check runs for this commit.</p>`;
   const counts = checkCounts(checks)!;
   const state = counts.failed ? "failed" : counts.pending ? "untested" : "passed";
-  const label = counts.failed ? "Failed" : counts.pending ? "Running" : "Succeeded";
-  const groups = new Map<string, CheckRun[]>();
-  for (const check of checks) groups.set(check.workflow ?? "Checks", [...(groups.get(check.workflow ?? "Checks") ?? []), check]);
+  const label = counts.failed ? "Failing" : counts.pending ? "Still running" : "All passing";
   const time = duration(checks);
-  return `<h3 class="sub">${icon(state, `s-${state}`)} Checks</h3><p><b class="st-${state}">${label}</b>${time ? ` <span class="muted">· ${time}</span>` : ""}</p><p class="muted">${plural(checks.length, "check")}: ${counts.passed} passed${counts.failed ? `, ${counts.failed} failed` : ""}${counts.pending ? `, ${counts.pending} pending` : ""}</p>${[...groups]
-    .map(
-      ([name, runs]) =>
-        `<details class="disclosure"><summary>${icon("chevron", "chev")}${icon(runs.some((r) => r.bucket === "fail") ? "failed" : runs.some((r) => r.bucket === "pending") ? "untested" : "passed", runs.some((r) => r.bucket === "fail") ? "s-failed" : runs.some((r) => r.bucket === "pending") ? "s-untested" : "s-passed")}<b>${esc(name)}</b><span class="muted">${runs.filter((r) => r.bucket === "pass").length} passed</span></summary><div class="disclosure-body"><ul class="checks">${runs
-          .map((run) => `<li><span class="ev-status ev-${run.bucket === "pass" ? "resolved" : run.bucket === "fail" ? "unresolved" : "unverified"}">${BUCKET_WORD[run.bucket]}</span> ${run.link ? `<a href="${esc(run.link)}" target="_blank" rel="noreferrer">${esc(run.name)}</a>` : esc(run.name)}</li>`)
-          .join("")}</ul></div></details>`,
-    )
-    .join("")}`;
+  return `${head}<p>${icon(state, `s-${state}`)} <b class="st-${state}">${label}</b> <span class="muted">· ${counts.passed} of ${plural(checks.length, "check")} passed${time ? ` · ${time}` : ""}</span></p><ul class="checks">${checks
+    .map((run) => `<li><span class="ev-status ev-${run.bucket === "pass" ? "resolved" : run.bucket === "fail" ? "unresolved" : "unverified"}">${BUCKET_WORD[run.bucket]}</span> ${run.link ? `<a href="${esc(run.link)}" target="_blank" rel="noreferrer">${esc(run.name)}</a>` : esc(run.name)}${run.workflow ? ` <span class="muted">· ${esc(run.workflow)}</span>` : ""}</li>`)
+    .join("")}</ul>`;
 }
 
 const LEVELS = ["risk", "watch", "note"] as const;
-const LEVEL_WORD = { risk: "high", watch: "medium", note: "low" } as const;
+const LEVEL_TITLE = { risk: "High — could change behavior or break something", watch: "Medium — worth checking", note: "Low — good to know" } as const;
 function risks(document: ResolvedDocument) {
-  const items = [...document.considerations].sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
-  if (!items.length) return `<h3 class="sub">What to pay attention to</h3><p class="muted">No high-level risks or open questions were identified.</p>`;
-  const anchor = (item: (typeof items)[number]) => item.evidence.find((e) => e.status === "resolved") ?? item.evidence[0] ?? null;
-  const byFile = new Map<string, typeof items>();
-  for (const item of items) {
-    const key = anchor(item)?.path ?? "";
-    byFile.set(key, [...(byFile.get(key) ?? []), item]);
-  }
-  const count = (level: (typeof LEVELS)[number]) => items.filter((item) => item.level === level).length;
-  const files = [...byFile.keys()].filter(Boolean).length;
-  return `<h3 class="sub">What to pay attention to</h3><p class="muted">${plural(items.length, "finding")}${files ? ` · ${plural(files, "file")}` : ""}</p><div class="segbar">${LEVELS.filter(count)
-    .map((level) => `<span class="seg sev-${level}" style="flex:${count(level)}"></span>`)
-    .join("")}</div><p class="tally">${LEVELS.filter(count)
-    .map((level) => `<span class="dot sev-${level}"></span><b>${count(level)}</b> ${LEVEL_WORD[level]}`)
-    .join(" ")}</p>${[...byFile]
-    .map(
-      ([file, group]) =>
-        `<div class="file-group"><p class="file-head">${icon("file")}<code>${esc(file || "General")}</code><span class="count"><span class="dot sev-${group[0]!.level}"></span>${group.length}</span></p>${group
-          .map((item) => {
-            const at = anchor(item);
-            return `<details class="disclosure finding"><summary>${icon("chevron", "chev")}${icon(item.level === "note" ? "info" : "warn", `sev-i-${item.level}`)}<span class="grow">${esc(item.title)}</span>${at?.line ? `<span class="mono muted">${at.line}</span>` : ""}${badge("Open")}</summary><div class="disclosure-body"><p>${esc(item.detail)}</p>${evidenceLinks(item.evidence)}</div></details>`;
-          })
-          .join("")}</div>`,
-    )
-    .join("")}`;
+  const lead = intro("What this tab is for", "The model's list of spots worth a closer look while you review: likely trouble spots and open questions. They are not confirmed bugs. Each one says how to check it and where to look.");
+  if (!document.considerations.length) return `${lead}<p class="muted">The model didn't flag any risks or open questions for this PR.</p>`;
+  return `${lead}${LEVELS.map((level) => {
+    const items = document.considerations.filter((item) => item.level === level);
+    if (!items.length) return "";
+    return `<h3 class="sec"><span class="dot sev-${level}"></span>${LEVEL_TITLE[level]} <span class="muted">· ${items.length}</span></h3>${items
+      .map(
+        (item) =>
+          `<article class="risk risk-${level}"><h4>${icon(level === "note" ? "info" : "warn", `sev-i-${level}`)}${esc(item.title)}</h4><p>${esc(item.detail)}</p>${item.check ? `<p class="check"><b>How to check:</b> ${esc(item.check)}</p>` : ""}${item.evidence.length ? `<p class="sub-label">Where to look</p>${evidenceLinks(item.evidence)}` : ""}</article>`,
+      )
+      .join("")}`;
+  }).join("")}`;
 }
 
-function evidence(pr: PullRequest, references: ResolvedEvidence[], document: ResolvedDocument, generationId: string, model: string) {
+function evidence(pr: PullRequest, references: ResolvedEvidence[], document: ResolvedDocument, facts: BriefingFacts, generationId: string, model: string) {
   const counts = evidenceCounts(references);
   const boundaries = Array.from({ length: Math.max(document.boundaries.inScope.length, document.boundaries.outOfScope.length, document.boundaries.unchanged.length) }, (_, index) =>
     [document.boundaries.inScope[index], document.boundaries.outOfScope[index], document.boundaries.unchanged[index]].map((cell) => `<td>${esc(cell ?? "")}</td>`).join(""),
   );
-  return `<p>${counts.resolved} of ${plural(counts.total, "citation")} matched their quoted code${counts.unverified ? `, ${counts.unverified} unchecked` : ""}${counts.unresolved ? `, ${counts.unresolved} not found` : ""}. Before-evidence links to the base commit, after-evidence to the head; lines are re-anchored to the quoted code.</p><p class="muted">Sources</p><ol class="sources">${references
+  return `<p>Every source the briefing cites. For each one, the model quoted the code it relies on, and PR Briefings looked for that quote in the real file: <b>${counts.resolved}</b> of ${counts.total} matched${counts.unverified ? `, ${counts.unverified} had no quote to check` : ""}${counts.unresolved ? `, <b class="t-bad">${counts.unresolved}</b> weren't found` : ""}. Before-evidence links to the base commit; after-evidence links to the head.</p><ol class="sources">${references
     .map(
       (item, index) =>
-        `<li><span class="num">${index + 1}</span><span class="row-main"><span><a href="${esc(item.url)}" target="_blank" rel="noreferrer">${esc(`${item.path.split("/").pop()}${item.line ? `:${item.line}` : ""} · ${item.side === "base" ? "before" : "after"}`)}</a> <span class="ev-status ev-${item.status}">${STATUS_WORD[item.status]}</span></span><span class="muted">${icon("globe")} ${esc(pr.host)} · <span class="mono">${esc(item.path)}</span></span><span>${esc(item.note)}${item.citedLine !== null && item.status === "resolved" ? ` <span class="muted">(model cited line ${item.citedLine})</span>` : ""}</span></span></li>`,
+        `<li><span class="num">${index + 1}</span><span class="row-main"><span><a href="${esc(item.url)}" target="_blank" rel="noreferrer">${esc(`${item.path.split("/").pop()}${item.line ? `:${item.line}` : ""} · ${item.side === "base" ? "before" : "after"}`)}</a> <span class="ev-status ev-${item.status}">${STATUS_WORD[item.status]}</span></span><span class="muted mono">${esc(item.path)}</span><span>${esc(item.note)}${item.citedLine !== null && item.status === "resolved" ? ` <span class="muted">(model cited line ${item.citedLine})</span>` : ""}</span></span></li>`,
     )
-    .join("")}</ol><details class="disclosure"><summary>${icon("chevron", "chev")}Scope boundaries</summary><div class="disclosure-body"><table class="table"><thead><tr><th>In scope</th><th>Out of scope</th><th>Unchanged</th></tr></thead><tbody>${boundaries.map((row) => `<tr>${row}</tr>`).join("")}</tbody></table></div></details><dl class="kv"><dt>Briefed head</dt><dd class="mono">${pr.headSha.slice(0, 12)}</dd><dt>Merge base</dt><dd class="mono">${pr.baseSha.slice(0, 12)}</dd><dt>Generation</dt><dd class="mono">${esc(generationId.slice(0, 8))}</dd><dt>Model</dt><dd>${esc(model)}</dd></dl>`;
+    .join("")}</ol>${
+    facts.excerpts.length
+      ? `<details class="disclosure"><summary>${icon("chevron", "chev")}Code at the cited lines <span class="muted">· ${plural(facts.excerpts.length, "excerpt")}</span></summary><div class="disclosure-body">${facts.excerpts.map(excerptBlock).join("")}</div></details>`
+      : ""
+  }<details class="disclosure"><summary>${icon("chevron", "chev")}Scope boundaries</summary><div class="disclosure-body"><table class="table"><thead><tr><th>In scope</th><th>Out of scope</th><th>Unchanged</th></tr></thead><tbody>${boundaries.map((row) => `<tr>${row}</tr>`).join("")}</tbody></table></div></details><dl class="kv"><dt>Briefed head</dt><dd class="mono">${pr.headSha.slice(0, 12)}</dd><dt>Merge base</dt><dd class="mono">${pr.baseSha.slice(0, 12)}</dd><dt>Generation</dt><dd class="mono">${esc(generationId.slice(0, 8))}</dd><dt>Model</dt><dd>${esc(model)}</dd></dl>`;
 }
 
 // ── Styles (BB / Generative UI card look, light and dark) ───────────────────
 
-const STYLE = `:root{color-scheme:light dark;--bg:#f7f9fb;--card:#eef4f9;--line:#d7dfe8;--ink:#1d2939;--muted:#5d6878;--soft:#dfe8f1;--accent:#3d6fa6;--accent-soft:#d9e6f3;--good:#1e7a6e;--good-soft:#d4ece7;--bad:#b4323a;--bad-soft:#f6dcdc;--warn:#9a5b16;--warn-soft:#f3e6d3;--purple:#3d6fa6;--bar-add:#4573a8;--bar-del:#9aa6b2;--code:#ffffff;--add:#e3f3e6;--del:#fbe2e2}
-@media(prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a2129;--line:#303a46;--ink:#e6ebf1;--muted:#9aa6b4;--soft:#232d38;--accent:#8db6e3;--accent-soft:#223448;--good:#6fcfb8;--good-soft:#173a33;--bad:#f09a9f;--bad-soft:#3d2224;--warn:#e8b56d;--warn-soft:#3a2d1a;--bar-add:#6d9bd0;--bar-del:#5e6b78;--code:#141a20;--add:#173323;--del:#3a1d20}}
+const STYLE = `:root{color-scheme:light dark;--bg:#f7f9fb;--card:#eef4f9;--line:#d7dfe8;--ink:#1d2939;--muted:#5d6878;--soft:#dfe8f1;--accent:#3d6fa6;--accent-soft:#d9e6f3;--good:#1e7a6e;--good-soft:#d4ece7;--bad:#b4323a;--bad-soft:#f6dcdc;--warn:#9a5b16;--warn-soft:#f3e6d3;--purple:#3d6fa6;--bar-add:#2da44e;--bar-del:#cf222e;--gh-add:#1a7f37;--gh-del:#cf222e;--code:#ffffff;--add:#e3f3e6;--del:#fbe2e2}
+@media(prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a2129;--line:#303a46;--ink:#e6ebf1;--muted:#9aa6b4;--soft:#232d38;--accent:#8db6e3;--accent-soft:#223448;--good:#6fcfb8;--good-soft:#173a33;--bad:#f09a9f;--bad-soft:#3d2224;--warn:#e8b56d;--warn-soft:#3a2d1a;--bar-add:#3fb950;--bar-del:#f85149;--gh-add:#3fb950;--gh-del:#f85149;--code:#141a20;--add:#173323;--del:#3a1d20}}
 *{box-sizing:border-box}html{background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;padding:24px 16px 48px}a{color:var(--ink);text-underline-offset:3px}p{margin:0 0 10px}h1{font-size:15px;font-weight:650;margin:0 0 12px}code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em}code{background:var(--soft);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}.muted{color:var(--muted)}.t-good{color:var(--good)}.t-bad{color:var(--bad)}.t-warn{color:var(--warn)}
 .card{max-width:940px;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 20px 16px}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0}.metric span{display:block;color:var(--muted);font-size:13px}.metric b{display:block;font-size:21px;font-weight:700;letter-spacing:-.01em;line-height:1.3}.metric.tone-good b{color:var(--good)}.metric.tone-bad b{color:var(--bad)}.metric.tone-warn b{color:var(--warn)}
@@ -469,7 +533,7 @@ ${[1, 2, 3, 4, 5, 6].map((n) => `#tab-${n}:checked~.tabbar label[for=tab-${n}]{c
 .list{list-style:none;margin:0 0 14px;padding:0}.row{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row-main{display:grid;gap:1px;flex:1;min-width:0}.row-main b{font-weight:500}.row-side{display:grid;justify-items:end;text-align:right;font-size:12.5px}.tile{display:grid;place-items:center;width:30px;height:30px;border-radius:7px;background:var(--soft);color:var(--muted);flex:none}
 .chart{margin:4px 0 8px}.chart svg{width:100%;height:auto}.legend{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-bottom:4px}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}.sw-add,.bar-add{background:var(--bar-add);fill:var(--bar-add)}.sw-del,.bar-del{background:var(--bar-del);fill:var(--bar-del)}.grid{stroke:var(--line);stroke-dasharray:3 4}.grid.base{stroke-dasharray:none}.tick,.xlab{font-size:11px;fill:var(--muted)}.caption{color:var(--ink)}.caption b{font-weight:600}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:14px}.cols .badge{margin-bottom:10px}.ev{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:12.5px}.ev li{display:block}.ev-note{display:block;color:var(--muted)}.ev-status{font-size:11px;border-radius:999px;padding:0 6px;background:var(--soft);color:var(--muted)}.ev-resolved{background:var(--good-soft);color:var(--good)}.ev-unresolved{background:var(--bad-soft);color:var(--bad)}.ev-side{font-size:11px;color:var(--muted)}
-.code{margin:6px 0 14px;background:var(--code);border:1px solid var(--line);border-radius:8px;overflow:hidden}.code figcaption{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px}.code figcaption code{background:none;padding:0}.plus{color:var(--good);font-family:ui-monospace,Menlo,monospace;font-size:12px}.minus{color:var(--bad);font-family:ui-monospace,Menlo,monospace;font-size:12px}.code pre{margin:0;padding:8px 0;overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}.dl{display:block;white-space:pre;padding-right:12px}.dl .ln{display:inline-block;width:3.6em;padding-right:1em;text-align:right;color:var(--muted);user-select:none}.dl-add{background:var(--add)}.dl-del{background:var(--del)}.dl-focus{background:var(--accent-soft)}
+.code{margin:6px 0 14px;background:var(--code);border:1px solid var(--line);border-radius:8px;overflow:hidden}.code figcaption{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px}.code figcaption code{background:none;padding:0}.plus{color:var(--gh-add);font-family:ui-monospace,Menlo,monospace;font-size:12px}.minus{color:var(--gh-del);font-family:ui-monospace,Menlo,monospace;font-size:12px}.code pre{margin:0;padding:8px 0;overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}.dl{display:block;white-space:pre;padding-right:12px}.dl .ln{display:inline-block;width:3.6em;padding-right:1em;text-align:right;color:var(--muted);user-select:none}.dl .ln+.ln{width:3em}.dl-add{background:var(--add)}.dl-del{background:var(--del)}.dl-focus{background:var(--accent-soft)}
 .compare{margin:8px 0 14px}.compare-head{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px}.pill{background:var(--soft);border-radius:8px;padding:6px 10px;font-size:13px}.pill .muted{margin-right:6px}.compare-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare-pair>div{display:grid;place-items:center;min-height:120px;background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px}.compare-pair img{max-width:100%;max-height:320px;object-fit:contain}
 .diagram{margin:0 0 6px;overflow-x:auto;border-bottom:1px solid var(--line);padding-bottom:12px}.diagram svg{width:100%;height:auto}.node{fill:#d0ebff;stroke:#1c7ed6;stroke-width:1.3}.node.changed{fill:#a5d8ff;stroke:#1864ab;stroke-width:2.2}.node-label{font-size:12px;fill:#1d2939}.edge{fill:none;stroke:var(--muted);stroke-width:1.3}.arrow{fill:var(--muted)}.hint{color:var(--muted);font-size:13px}
 @media(prefers-color-scheme:dark){.node{fill:#1b3a57;stroke:#4dabf7}.node.changed{fill:#1e4f7a;stroke:#a5d8ff}.node-label{fill:#e6ebf1}}
@@ -478,7 +542,7 @@ ${[1, 2, 3, 4, 5, 6].map((n) => `#tab-${n}:checked~.tabbar label[for=tab-${n}]{c
 .tm-c0{background:#d3e2f1}.tm-c0 .tm-cell{background:#b9cfe6}.tm-c1{background:#d3e9e6}.tm-c1 .tm-cell{background:#b5d6d1}.tm-c2{background:#ecdfd2}.tm-c2 .tm-cell{background:#dcc6b2}.tm-c3{background:#e2dcef}.tm-c3 .tm-cell{background:#cbc1e3}.tm-c4{background:#e4e8dc}.tm-c4 .tm-cell{background:#cdd6c0}
 @media(prefers-color-scheme:dark){.tm-c0{background:#1f3347}.tm-c0 .tm-cell{background:#2a4561}.tm-c1{background:#1d3a37}.tm-c1 .tm-cell{background:#285049}.tm-c2{background:#3a2e22}.tm-c2 .tm-cell{background:#4e3d2c}.tm-c3{background:#2c2840}.tm-c3 .tm-cell{background:#3b3557}.tm-c4{background:#2c3226}.tm-c4 .tm-cell{background:#3c4533}}
 .steps{margin:0;padding:0;list-style:none;counter-reset:s}.steps li{position:relative;padding:0 0 12px 34px;display:grid;counter-increment:s}.steps li:before{content:counter(s);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-size:12px;color:var(--muted);background:var(--card)}.steps li.current:before{border-color:var(--accent);color:var(--accent);font-weight:700}.steps li b{font-weight:600}
-.verdict{font-size:16px;margin:2px 0 6px}.tally{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}.tally b{color:var(--ink);font-weight:600}.segbar{display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden;margin:6px 0 12px}.seg-passed{background:var(--good)}.seg-claimed{background:repeating-linear-gradient(135deg,var(--accent) 0 3px,var(--accent-soft) 3px 6px)}.seg-untested{background:var(--bar-del)}.seg-failed{background:var(--bad)}
+.verdict{font-size:16px;margin:2px 0 6px}.tally{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}.tally b{color:var(--ink);font-weight:600}.segbar{display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden;margin:6px 0 12px}.seg-passed{background:var(--good)}.seg-claimed{background:repeating-linear-gradient(135deg,var(--accent) 0 3px,var(--accent-soft) 3px 6px)}.seg-untested{background:var(--warn)}.seg-failed{background:var(--bad)}
 .needs{background:var(--warn-soft);border-radius:8px;padding:10px 14px;margin-bottom:12px}.needs-title{color:var(--warn);font-weight:600}.needs p{margin:0 0 4px}.needs p span{display:block;font-size:12.5px}
 .s-passed{color:var(--good)}.s-passed .fill{fill:var(--good);stroke:none}.s-failed{color:var(--bad)}.s-failed .fill{fill:var(--bad);stroke:none}.on-fill{stroke:#fff}.s-untested{color:var(--muted)}.s-claimed{color:var(--accent)}.st-passed{color:var(--good)}.st-failed{color:var(--bad)}.st-claimed{color:var(--accent)}.st-untested{color:var(--ink)}.row-side b{font-weight:600}.accept .row{align-items:flex-start}.accept .row>.i{margin-top:3px}
 h3.sub{display:flex;gap:8px;align-items:center;font-size:15px;margin:16px 0 4px}.checks{list-style:none;margin:0;padding:0;display:grid;gap:4px}
@@ -487,6 +551,18 @@ h3.sub{display:flex;gap:8px;align-items:center;font-size:15px;margin:16px 0 4px}
 .table{width:100%;border-collapse:collapse;font-size:13px}.table th,.table td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}.table th{color:var(--muted);font-weight:500}
 .kv{display:grid;grid-template-columns:130px 1fr;margin:8px 0 0}.kv dt,.kv dd{margin:0;padding:9px 0;border-bottom:1px solid var(--line)}.kv dt{color:var(--muted)}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.button{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;text-decoration:none;font-weight:500}.button:hover{background:var(--soft)}
+.metric b span,.metric .plus,.metric .minus{display:inline;font:inherit;color:inherit}.metric b .plus{color:var(--gh-add)}.metric b .minus{color:var(--gh-del)}.sec{font-size:14.5px;font-weight:650;margin:20px 0 8px}.sec:first-child{margin-top:0}.sub-label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+.explain{display:flex;gap:10px;background:var(--soft);border-radius:8px;padding:10px 14px;margin-bottom:14px}.explain .i{color:var(--accent);margin-top:3px}.explain b{display:block;font-weight:600}.explain p{margin:2px 0 0}
+.side{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.side p{margin:6px 0 0}.side-tag{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}.side.before .side-tag{color:var(--bad)}.side.after .side-tag{color:var(--good)}.side.before{border-top:3px solid var(--bad)}.side.after{border-top:3px solid var(--good)}
+.example{margin:0 0 16px}.example>p{margin-bottom:6px}.dl .sign{display:inline-block;width:1.4em;color:var(--muted);user-select:none}.dl-add .sign{color:var(--gh-add)}.dl-del .sign{color:var(--gh-del)}.dl-mark{box-shadow:inset 3px 0 0 var(--warn);font-weight:600}
+.empty{display:flex;gap:12px;border:1px dashed var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}.empty .i{width:22px;height:22px;color:var(--muted)}.empty p{margin:2px 0 0}
+.shot{margin:0 0 14px}.shot figcaption{margin-bottom:6px;font-size:13px}.shot-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.shot-pair>div,.shot-single{position:relative;display:grid;place-items:center;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:28px 10px 10px;min-height:120px}.shot img{max-width:100%;max-height:520px;object-fit:contain;border-radius:4px}.shot-tag{position:absolute;top:6px;left:8px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}.shot-tag.before{color:var(--bad)}.shot-tag.after{color:var(--good)}
+.sketch-figure{margin:4px 0 12px;overflow-x:auto}.sketch-figure .legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:6px}.swatch{width:14px;height:14px;vertical-align:-2px}
+.impacts{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:8px}.impact{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:12px 14px;scroll-margin-top:12px}.impact:target{outline:2px solid var(--accent)}.impact-head{display:flex;gap:8px;align-items:center;font-size:12.5px}.impact h4{margin:8px 0 4px;font-size:14px}.impact p{margin:0 0 8px}.impact .depends{font-size:13px}.impact .depends b{font-weight:600}
+.flow{margin:0 0 16px}.flow h4{margin:0 0 6px;font-size:14px}.flow .sketch{margin-bottom:8px}.flow-steps{margin:0;padding-left:22px;display:grid;gap:4px;font-size:13.5px}.flow-steps li.changed b{color:var(--warn)}
+.summary-line{font-size:15px;margin:0 0 6px}.key{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--muted);font-size:12.5px}.key b{color:var(--ink);font-weight:600;margin-left:-6px}.disclosure.inline{border:0}.disclosure.inline summary{padding:4px 0;font-size:12.5px;color:var(--accent)}
+.risk{background:var(--code);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:10px}.risk-risk{border-left-color:var(--bad)}.risk-watch{border-left-color:var(--warn)}.risk h4{display:flex;gap:8px;align-items:center;margin:0 0 6px;font-size:14px}.risk .check{background:var(--soft);border-radius:6px;padding:6px 10px}.sec .dot{margin-right:8px}
+@media(max-width:700px){.shot-pair{grid-template-columns:1fr}}
 @media(max-width:700px){.metrics{grid-template-columns:1fr 1fr}.cols,.compare-head,.compare-pair{grid-template-columns:1fr}.card{padding:16px 14px}body{padding:12px 8px 32px}}
 @media print{.tab-input,.tabbar{display:none}.panel{display:block!important;margin-bottom:18px}.panel:before{content:attr(data-title);display:block;font-weight:700;font-size:15px;border-bottom:1px solid var(--line);margin-bottom:10px}}`;
 
@@ -511,7 +587,7 @@ export function renderBriefingHtml(options: {
   const metric = (label: string, value: string, note: string, tone = "") => `<div class="metric${tone ? ` tone-${tone}` : ""}"><span>${esc(label)}</span><b>${esc(value)}</b><span>${esc(note)}</span></div>`;
   const metrics = [
     metric("Files", fmt(lines.files), "changed"),
-    metric("Lines", `+${fmt(lines.added)} −${fmt(lines.removed)}`, "added / removed"),
+    `<div class="metric"><span>Lines</span><b><span class="plus">+${fmt(lines.added)}</span> <span class="minus">−${fmt(lines.removed)}</span></b><span>added / removed</span></div>`,
     !checks
       ? metric("CI", "—", "checks unavailable")
       : !checks.total
@@ -521,11 +597,11 @@ export function renderBriefingHtml(options: {
   ].join("");
   const panels = [
     overview(document, facts),
-    beforeAfter(document, facts),
-    impactAndFlow(document, facts),
-    verified(facts.acceptance, facts.checks),
+    beforeAfter(document, facts, pr.url),
+    impactAndFlow(document),
+    verified(facts.acceptance, facts.checks, references),
     risks(document),
-    evidence(pr, references, document, generationId, model),
+    evidence(pr, references, document, facts, generationId, model),
   ];
   const html = `<!doctype html>
 <html lang="en">
@@ -536,6 +612,8 @@ export function renderBriefingHtml(options: {
 <meta name="description" content="PR briefing for pull request ${pr.number}">
 <title>${esc(pr.title)} · PR briefing</title>
 <style>
+${SKETCH_FONT_FACE}
+${SKETCH_STYLE}
 ${STYLE}
 </style>
 </head>

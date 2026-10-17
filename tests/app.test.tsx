@@ -176,17 +176,12 @@ test("registers a dedicated page that works without Pair Review", async () => {
   fireEvent.click(view.getByRole("button", { name: "Clear filters" }));
 
   fireEvent.click(view.getByRole("button", { name: "Open briefing" }));
-  expect(view.inspection.navigateCalls).toContainEqual({
-    method: "experimental_openFilePreview",
-    options: {
-      target: {
-        kind: "host",
-        hostId: "host-1",
-        path: record.file,
-      },
-      location: null,
-    },
-  });
+  expect(view.inspection.navigateCalls).toContainEqual(
+    expect.objectContaining({ method: "toPluginPanel" }),
+  );
+  expect(JSON.stringify(view.inspection.navigateCalls)).toContain(
+    `view/${encodeURIComponent(url)}`,
+  );
 
   fireEvent.change(view.getByLabelText("GitHub pull request URL"), {
     target: { value: "https://github.com/example/other/pull/9" },
@@ -282,5 +277,50 @@ test("offers a Generative UI chat view for ready briefings with a bundle", async
     `cp -R '${bundle}/.' "$BB_THREAD_STORAGE/pr-briefings/${"c".repeat(24)}-${"b".repeat(12)}"/`,
   );
   expect(call?.options.initialPrompt).toContain("example/project #12");
+  view.lifecycle.unmount();
+});
+
+test("shows a briefing in the page and relays its links to BB's opener", async () => {
+  const app = await loadPluginApp(() => import("../app"));
+  const { withLinkBridge } = await import("../app");
+  expect(withLinkBridge("<html><body><p>x</p></body></html>")).toMatch(
+    /<p>x<\/p><script>[\s\S]*pr-briefings:open-url[\s\S]*<\/script><\/body>/,
+  );
+  const view = renderSlot(
+    app.navPanels[0]!,
+    { subPath: `view/${encodeURIComponent(url)}` },
+    {
+      rpc: {
+        briefing_html: () => ({
+          html: '<html><body><a href="https://github.com/x">x</a></body></html>',
+          title: pr.title,
+          subject: "example/project #12",
+          head: pr.headSha,
+        }),
+        snapshot: () => ({
+          queue: [],
+          briefings: [record],
+          preferences: { hostname: "github.com", model: "m", thinking: "medium", teams: "", teammates: "" },
+          pairReviewAvailable: false,
+          genuiAvailable: false,
+          refreshing: false,
+          warning: null,
+        }),
+      },
+    },
+  );
+  const frame = (await view.findByTitle(`Briefing: ${pr.title}`)) as HTMLIFrameElement;
+  expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(frame.getAttribute("srcdoc")).toContain("pr-briefings:open-url");
+  // Messages from anything but the frame are ignored.
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:open-url", href: "https://evil.example" } }));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:open-url", href: "https://github.com/x" }, source: frame.contentWindow }));
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "pr-briefings:open-url", href: "javascript:alert(1)" }, source: frame.contentWindow }));
+  const opened = view.inspection.navigateCalls.filter((call: { method: string }) => call.method === "openUrl");
+  expect(JSON.stringify(opened)).toContain("https://github.com/x");
+  expect(JSON.stringify(opened)).not.toContain("evil.example");
+  expect(JSON.stringify(opened)).not.toContain("javascript:");
+  fireEvent.click(view.getByRole("button", { name: "Pull request" }));
+  expect(JSON.stringify(view.inspection.navigateCalls)).toContain(url);
   view.lifecycle.unmount();
 });

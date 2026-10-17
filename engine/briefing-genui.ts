@@ -83,9 +83,10 @@ Card(b.meta.heading, [
         Stack([Badge("Before", tone: "bad"), Text(b.behavior.before)]),
         Stack([Badge("After", tone: "good"), Text(b.behavior.after)])
       ]),
-      b.keyHunk ? Text(b.keyHunk.caption) : null,
-      b.keyHunk ? Diff(b.keyHunk.patch) : null,
-      b.visuals.length > 0 ? Text("**What it looks like** · switch a comparison to *Difference* to see what moved.") : null,
+      Stack(b.code.map(c => Stack([Text(c.caption), Diff(c.patch)]))),
+      Stack(b.screenshots.map(s => s.after ? Stack([Text(s.caption), Compare([{src: s.before, label: "Before"}, {src: s.after, label: "After"}])]) : Stack([Text(s.caption), Image(s.before, alt: s.label)]))),
+      b.screenshotsNote ? Text(b.screenshotsNote, tone: "neutral") : null,
+      b.visuals.length > 0 ? Text("**Changed image files** · switch a comparison to *Difference* to see what moved.") : null,
       Stack(b.visuals.map(v => v.before && v.after ? Compare([{src: v.before, label: "Base · " + v.label}, {src: v.after, label: "Head"}]) : Stack([Text(v.caption), Image(v.before ?? v.after, alt: v.label)])))
     ]),
     Stack([
@@ -95,10 +96,14 @@ Card(b.meta.heading, [
       ${excerpts.length ? `Details("Key code", [${excerpts.map((excerpt, index) => `Stack([Text(b.excerpts[${index}].caption), Snippet(${JSON.stringify(excerpt.path)}, ${Math.trunc(excerpt.from)}, ${Math.trunc(excerpt.to)})])`).join(", ")}])` : "null"}
     ]),
     Stack([
+      Callout("PR Briefings double-checked some of this briefing itself, against the real code and GitHub. Rows marked *claimed* are only the model's word: confirm them while you review.", tone: "info", title: "What this tab is for"),
       Acceptance(b.acceptance),
       b.checks.length > 0 ? Pipeline(b.checks) : Text(b.checksNote, tone: "neutral")
     ]),
-    b.findings.length > 0 ? Findings(b.findings, title: "What to pay attention to") : Text("No high-level risks or open questions were identified.", tone: "neutral"),
+    Stack([
+      Callout("The model's list of spots worth a closer look while you review: likely trouble spots and open questions, not confirmed bugs. Each says how to check it.", tone: "info", title: "What this tab is for"),
+      b.findings.length > 0 ? Findings(b.findings, title: "What to pay attention to") : Text("The model didn't flag any risks or open questions for this PR.", tone: "neutral")
+    ]),
     Stack([
       Text(b.evidenceNote, tone: "neutral"),
       Sources(b.sources),
@@ -159,6 +164,18 @@ export function buildGenuiBundle(options: {
   const nodeOf = new Map(graph?.nodes.map((node, index) => [node.id, `n${index}`]));
   const firstFinding = (items: ResolvedEvidence[]) => items.find((item) => item.status === "resolved" && item.line !== null);
 
+  type Shown = Exclude<NonNullable<BriefingFacts["screenshots"]>[number], { kind: "recording" }>;
+  const screenshots = (facts.screenshots ?? []).filter((shot): shot is Shown => shot.kind !== "recording").map((shot, index) => {
+    const write = (which: string, image: { ext: string; bytes: Buffer }) => {
+      const path = `images/screenshot-${index + 1}-${which}.${image.ext}`;
+      files.push({ path, data: image.bytes });
+      return `${root}/${path}`;
+    };
+    const caption = `${shot.label ? `**${escapeMarkdown(shot.label)}** · ` : ""}from the ${escapeMarkdown(shot.source)}`;
+    return shot.kind === "pair"
+      ? { label: shot.label, caption, before: write("before", shot.before), after: write("after", shot.after) }
+      : { label: shot.label || "Screenshot", caption, before: write("image", shot.image), after: null };
+  });
   const visuals = facts.visuals.map((pair, index) => {
     const write = (which: "before" | "after", image: typeof pair.before) => {
       if (!image) return null;
@@ -207,20 +224,37 @@ export function buildGenuiBundle(options: {
       .map((item) => {
         const at = firstFinding(item.evidence);
         const file = at ? copy(at.side, at.path) : null;
-        return { severity: SEVERITY[item.level], title: item.title, detail: item.detail, ...(file && at ? { file, line: at.line } : {}), status: "open" };
+        return { severity: SEVERITY[item.level], title: item.title, detail: item.check ? `${item.detail} How to check: ${item.check}` : item.detail, ...(file && at ? { file, line: at.line } : {}) };
       }),
     acceptance: { title: "Verified vs. claimed", criteria: facts.acceptance.map((row) => ({ name: row.name, status: row.status, by: row.by, ...(row.note ? { note: row.note } : {}), ...(row.needs ? { needs: row.needs } : {}) })) },
     checks: (facts.checks ?? []).map((check) => Object.fromEntries(Object.entries(check).filter(([, value]) => value !== null))),
     checksNote: !facts.checks ? "Check runs could not be read for this head." : "No CI check runs were reported for this head.",
     behavior: { before: escapeMarkdown(document.behavior.before), after: escapeMarkdown(document.behavior.after) },
-    keyHunk: facts.keyHunk ? { caption: `**A representative change** · \`${escapeMarkdown(facts.keyHunk.path)}\``, patch: facts.keyHunk.patch } : null,
+    code: facts.examples.length
+      ? facts.examples.map((example) => ({ caption: `**What to notice:** ${escapeMarkdown(example.caption)}`, patch: example.patch }))
+      : facts.keyHunk
+        ? [{ caption: `The model didn't point at specific lines, so this is one changed hunk from \`${escapeMarkdown(facts.keyHunk.path)}\`.`, patch: facts.keyHunk.patch }]
+        : [],
+    screenshots,
+    screenshotsNote:
+      facts.screenshots === null
+        ? "The PR description and comments could not be read for screenshots."
+        : facts.screenshots.some((shot) => shot.kind === "recording")
+          ? `This PR has ${facts.screenshots.filter((shot) => shot.kind === "recording").length} screen recording(s) in its conversation; open the pull request to watch them.`
+          : facts.screenshots.length
+          ? null
+          : "No screenshots on this PR. Screenshots attached to the PR description or comments show up here, side by side when labeled Before and After.",
     visuals,
     graph:
       graph && {
         mermaid: [
           "flowchart LR",
           ...graph.nodes.map((node, index) => `  n${index}[${mermaidLabel(node.changed ? `${node.name} · changed` : node.name)}]`),
-          ...graph.edges.map((edge) => `  ${nodeOf.get(edge.from)} --> ${nodeOf.get(edge.to)}`),
+          ...graph.edges.map((edge) => {
+            const relation = document.impacts.find((item, index) => (item.id ?? `impact-${index + 1}`) === edge.to)?.relation;
+            const label = relation ? mermaidLabel(relation).slice(1, -1).slice(0, 30) : "";
+            return `  ${nodeOf.get(edge.from)} -->${label ? `|${label}|` : ""} ${nodeOf.get(edge.to)}`;
+          }),
         ].join("\n"),
         details: Object.fromEntries(
           document.impacts.map((item, index) => [

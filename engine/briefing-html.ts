@@ -20,9 +20,11 @@ export function extractBriefingHtml(output: string) {
     throw Error("Briefing HTML cannot redirect the preview");
   if (/<\s*link\b/i.test(html))
     throw Error("Briefing HTML cannot load external stylesheets");
+  // Checked inside tags only: escaped source code shown as text (for example
+  // a diff line containing onclick="…") is not markup and cannot execute.
   if (
-    /\son[a-z]+\s*=/i.test(html) ||
-    /(?:href|src)\s*=\s*["']\s*javascript:/i.test(html)
+    /<[a-z][^>]*\son[a-z]+\s*=/i.test(html) ||
+    /<[a-z][^>]*(?:href|src)\s*=\s*["']?\s*javascript:/i.test(html)
   )
     throw Error(
       "Briefing HTML cannot contain executable event handlers or URLs",

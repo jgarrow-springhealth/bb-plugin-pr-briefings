@@ -1,6 +1,6 @@
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { hostContract } from "./contract.ts";
-import { discoverPullRequests, generateBriefing } from "./engine/generate.ts";
+import { discoverPullRequests, generateBriefing, readReport } from "./engine/generate.ts";
 
 export default experimental_defineHostEntry({
   contract: hostContract,
@@ -20,6 +20,9 @@ export default experimental_defineHostEntry({
         signal: context.signal,
       });
       return result;
+    },
+    async read_report(input) {
+      return { html: readReport(input.file) };
     },
   },
 });

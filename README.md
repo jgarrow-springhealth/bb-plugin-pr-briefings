@@ -58,14 +58,34 @@ Opening the page, filtering, viewing a pull request, or opening a report never s
 
 ### What a report contains
 
-Reports are static, script-free HTML laid out as one card, the same layout the chat view uses. The header shows the verdict, four metrics (files, lines, CI, and citations matched), and a **Remember this** note. The rest is split into tabs, which switch with plain CSS so no scripts run:
+**Open briefing** shows the report inside the PR Briefings page. Links in the report (the pull request, evidence, CI checks) open through BB's normal link handling. **Open as file** still opens the raw HTML in BB's file preview, but BB's preview sandbox blocks links there.
 
-- **Overview:** plain-language summary rows with their evidence locations, and a chart of lines added and removed by area.
-- **Before / after:** both behaviors with evidence, one representative diff hunk, and before/after images. Images come from changed `.svg`, `.png`, `.jpg`, `.gif`, and `.webp` files, and from static inline SVG replaced in the same hunk.
-- **Impact & flow:** an impact graph built from the impacts the model links with `dependsOn`, an expandable row for each impact, a treemap of changed lines, the flows as numbered steps, and key code excerpts.
-- **Verified:** each criterion is marked passed, failed, not tested, or only claimed, with who checked it, plus a **Needs you** list and the CI checks.
-- **Risks:** the model's risks and open questions, grouped by file and ordered by severity.
-- **Evidence:** numbered sources with their match status, the scope boundaries, and the generation snapshot.
+Reports are static HTML laid out as one card, the same layout the chat view uses. The header shows the verdict, four metrics (files, lines added and removed, CI, and citations matched), and a **Remember this** note. The rest is split into tabs, which switch with plain CSS:
+
+- **Overview:** plain-language summary rows with their evidence locations, and a chart of lines added (green) and removed (red) by area.
+- **Before / after:** the change three ways.
+  - *In words:* the before and after behavior.
+  - *In the code:* one to three hunks the model picked, each with a "What to notice" caption. PR Briefings finds each one in the diff by an exact line.
+  - *On screen:* screenshots attached to the PR description or its comments, side by side when they're labeled Before and After. Changed image files appear here too. Screen recordings are linked, not embedded.
+- **Impact & flow:** an Excalidraw-style ("sketch") diagram of what the change touches. Select a box to jump to that part's card. Each flow is drawn as sketched steps with a numbered explanation.
+- **Verified:** what PR Briefings checked itself (quoted citations, CI) versus what is only the model's claim, plus anything that needs a person.
+- **Risks:** the model's spots worth a closer look, grouped by severity. Each says how to check it and where to look. These are not confirmed bugs.
+- **Evidence:** numbered sources with their match status, the code at the cited lines, the scope boundaries, and the generation snapshot.
+
+The sketch diagrams are drawn on the server with [roughjs](https://roughjs.com) (the library Excalidraw uses) in Excalifont, which is embedded in the report and licensed under the SIL Open Font License (`assets/fonts/Excalifont-OFL.txt`).
+
+#### Screenshots
+
+Briefings show screenshots only when the PR already includes them.
+
+- **Where they come from:** PR Briefings reads GitHub's rendered HTML for the PR description and up to 50 comments, and keeps only pasted image attachments. It skips badges, avatars, and external sites.
+- **How they're downloaded:** through GitHub's short-lived signed links, without sending credentials.
+- **Limits:**
+  - at most 8 screenshots and 3 MiB in total
+  - only real PNG, JPEG, GIF, or WebP files are accepted
+- **What it won't do:** PR Briefings doesn't run the PR's branch to take its own screenshots.
+
+Each report also saves the validated model output privately beside it (`<head>.json`), so a report can be rebuilt without another model run.
 
 How citations are checked:
 

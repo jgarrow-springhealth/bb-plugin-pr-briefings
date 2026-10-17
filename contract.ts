@@ -176,6 +176,11 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
   },
+  /** Reads one generated report; the host only serves .html files under its briefs directory. */
+  read_report: {
+    input: z.object({ file: z.string().min(1).max(4096) }).strict(),
+    output: z.object({ html: z.string() }).strict(),
+  },
 });
 
 export const PullRequestUrl = z.string().url().max(2048);
@@ -206,6 +211,11 @@ export const rpcContract = defineRpcContract({
   briefing_generate: {
     input: urlInput,
     output: BriefingStatus,
+  },
+  /** The ready report's HTML, for the in-app viewer. */
+  briefing_html: {
+    input: urlInput,
+    output: z.object({ html: z.string(), title: z.string(), subject: z.string(), head: sha.nullable() }).strict(),
   },
   reset_settings: {
     input: z.null(),

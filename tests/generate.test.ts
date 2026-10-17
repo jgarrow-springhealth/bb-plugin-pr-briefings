@@ -210,7 +210,8 @@ test("renders verification, charts, graph, visuals, and base-linked evidence as 
   );
   expect(html).toContain(`/blob/${"a".repeat(40)}/src/fallback.ts#L2`);
   expect(html).toContain("model cited line 1");
-  expect(html).toContain("What this briefing verified vs. what it only claims");
+  expect(html).toContain("What this tab is for");
+  expect(html).toContain("Checked automatically");
   expect(html).toContain('aria-label="Lines added and removed by area"');
   expect(html).toContain('aria-label="Impact graph"');
   expect(html).toContain('src="data:image/svg+xml;base64,');
@@ -239,4 +240,33 @@ test("keeps only the first changed impact and flow step instead of failing", () 
   const parsed = parseBriefingDocument(JSON.stringify(many));
   expect(parsed.impacts.map((item) => item.changed)).toEqual([true, false]);
   expect(parsed.flows[0]!.steps.map((step) => step.changed)).toEqual([true, false]);
+});
+
+test("rejects event handlers in markup but not in escaped code text", async () => {
+  const { extractBriefingHtml } = await import("../engine/briefing-html");
+  const page = (body: string) => `<!doctype html><html><head></head><body>${body}</body></html>`;
+  expect(() => extractBriefingHtml(page('<div onclick="x()">a</div>'))).toThrow("event handlers");
+  expect(() => extractBriefingHtml(page('<a href="javascript:alert(1)">a</a>'))).toThrow("event handlers");
+  expect(extractBriefingHtml(page('<pre>&lt;button onclick=&quot;close()&quot;&gt;</pre>'))).toContain("onclick=");
+});
+
+test("draws dependency chains instead of redundant direct edges", async () => {
+  const { impactGraph } = await import("../engine/briefing-render");
+  const graph = impactGraph([
+    { id: "core", name: "Core", kind: "package", changed: true },
+    { id: "pages", dependsOn: ["core"], name: "Pages", kind: "product surface", changed: false },
+    { id: "panel", dependsOn: ["core", "pages"], name: "Panel", kind: "product surface", changed: false },
+  ]);
+  expect(graph?.edges).toEqual([
+    { from: "core", to: "pages" },
+    { from: "pages", to: "panel" },
+  ]);
+});
+
+test("asks once for corrected JSON with bounded validation errors", async () => {
+  const { repairRequest } = await import("../engine/generate");
+  const request = repairRequest(`impacts.1.changed: expected boolean ${"x".repeat(9000)}`);
+  expect(request).toContain("impacts.1.changed: expected boolean");
+  expect(request).toContain("return the complete corrected JSON object only");
+  expect(request.length).toBeLessThan(4300);
 });

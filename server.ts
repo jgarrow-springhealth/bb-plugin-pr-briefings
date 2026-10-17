@@ -281,6 +281,19 @@ export default function plugin(bb: BbPluginApi) {
     },
     briefing_get: ({ url, head }) => statusFor(url, head),
     briefing_generate: ({ url }) => enqueue(url),
+    briefing_html: async ({ url }) => {
+      const record = db
+        .prepare("SELECT * FROM briefings WHERE url=?")
+        .get(url) as BriefingRecord | undefined;
+      if (!record || record.state !== "ready" || !record.file || !record.hostId)
+        throw Error("This briefing is not ready");
+      const { html } = await host.call(
+        "read_report",
+        { file: record.file },
+        { hostId: record.hostId, timeoutMs: 60_000 },
+      );
+      return { html, title: record.title, subject: record.subject, head: record.head };
+    },
     reset_settings: async () =>
       Preferences.parse(
         await settings.experimental_set({
