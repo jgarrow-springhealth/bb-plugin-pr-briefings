@@ -58,21 +58,14 @@ Opening the page, filtering, viewing a pull request, or opening a report never s
 
 ### What a report contains
 
-Reports are static, script-free HTML. Sections, in reading order:
+Reports are static, script-free HTML laid out as one card, the same layout the chat view uses. The header shows the verdict, four metrics (files, lines, CI, and citations matched), and a **Remember this** note. The rest is split into tabs, which switch with plain CSS so no scripts run:
 
-- **Header:** verdict, plain-language summary, and metrics for files, lines, CI, and how many citations matched their quoted code.
-- **What to pay attention to:** the model's risks and open questions, ordered by severity, each with its evidence.
-- **Verified vs. claimed:** each row says who checked it.
-  - *Verified:* quoted citations found in the cited commit; CI checks passing.
-  - *Claimed:* the model's stated invariants and citations given without a quote.
-  - *Needs you:* pending checks and changed images.
-- **Before and after:** both behaviors with evidence, one representative diff hunk, and before/after images. Images come from changed `.svg`, `.png`, `.jpg`, `.gif`, and `.webp` files, and from static inline SVG replaced in the same hunk.
-- **Where the change lands:** lines added and removed by area.
-- **Impact map:** a graph drawn from the impacts the model links with `dependsOn`, plus the impact cards.
-- **Flow, key code, boundaries, CI checks, and evidence:**
-  - Key code excerpts sit around the citations that matched.
-  - Before-evidence links to the base commit; everything else links to the head.
-  - Lines are re-anchored to where the quoted code really is.
+- **Overview:** plain-language summary rows with their evidence locations, and a chart of lines added and removed by area.
+- **Before / after:** both behaviors with evidence, one representative diff hunk, and before/after images. Images come from changed `.svg`, `.png`, `.jpg`, `.gif`, and `.webp` files, and from static inline SVG replaced in the same hunk.
+- **Impact & flow:** an impact graph built from the impacts the model links with `dependsOn`, an expandable row for each impact, a treemap of changed lines, the flows as numbered steps, and key code excerpts.
+- **Verified:** each criterion is marked passed, failed, not tested, or only claimed, with who checked it, plus a **Needs you** list and the CI checks.
+- **Risks:** the model's risks and open questions, grouped by file and ordered by severity.
+- **Evidence:** numbered sources with their match status, the scope boundaries, and the generation snapshot.
 
 How citations are checked:
 
