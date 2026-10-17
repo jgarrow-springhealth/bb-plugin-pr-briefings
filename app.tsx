@@ -241,7 +241,31 @@ export function withLinkBridge(html: string) {
   return at < 0 ? html + LINK_BRIDGE : html.slice(0, at) + LINK_BRIDGE + html.slice(at);
 }
 
-export const viewerSubPath = (url: string) => `view/${encodeURIComponent(url)}`;
+/**
+ * The viewer's route carries the PR URL as base64url: BB re-encodes subPaths
+ * when it builds the route, so a percent-encoded URL would come back mangled.
+ * PR URLs are validated ASCII, so btoa is safe.
+ */
+export const viewerSubPath = (url: string) =>
+  `view/${btoa(url).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+
+/** The PR URL in a viewer subPath; also accepts older percent-encoded links. */
+export function viewerUrl(subPath: string): string | null {
+  if (!subPath.startsWith("view/")) return null;
+  let token = subPath.slice("view/".length);
+  try {
+    const decoded = atob(token.replace(/-/g, "+").replace(/_/g, "/"));
+    if (/^https:\/\//.test(decoded)) return decoded;
+  } catch {}
+  for (let attempt = 0; attempt < 3 && !/^https:\/\//.test(token); attempt++) {
+    try {
+      token = decodeURIComponent(token);
+    } catch {
+      return null;
+    }
+  }
+  return /^https:\/\//.test(token) ? token : null;
+}
 
 function BriefingViewer({ url }: { url: string }) {
   const rpc = useRpc<typeof rpcContract>();
@@ -343,13 +367,8 @@ function BriefingViewer({ url }: { url: string }) {
 }
 
 function BriefingsPage(props: PluginNavPanelProps) {
-  if (props.subPath.startsWith("view/")) {
-    let url = "";
-    try {
-      url = decodeURIComponent(props.subPath.slice("view/".length));
-    } catch {}
-    if (url) return <BriefingViewer url={url} />;
-  }
+  const url = viewerUrl(props.subPath);
+  if (url) return <BriefingViewer url={url} />;
   return <BriefingsList />;
 }
 

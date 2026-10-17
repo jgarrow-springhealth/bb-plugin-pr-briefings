@@ -179,9 +179,8 @@ test("registers a dedicated page that works without Pair Review", async () => {
   expect(view.inspection.navigateCalls).toContainEqual(
     expect.objectContaining({ method: "toPluginPanel" }),
   );
-  expect(JSON.stringify(view.inspection.navigateCalls)).toContain(
-    `view/${encodeURIComponent(url)}`,
-  );
+  const { viewerSubPath, viewerUrl } = await import("../app");
+  expect(JSON.stringify(view.inspection.navigateCalls)).toContain(viewerSubPath(url));
 
   fireEvent.change(view.getByLabelText("GitHub pull request URL"), {
     target: { value: "https://github.com/example/other/pull/9" },
@@ -288,7 +287,7 @@ test("shows a briefing in the page and relays its links to BB's opener", async (
   );
   const view = renderSlot(
     app.navPanels[0]!,
-    { subPath: `view/${encodeURIComponent(url)}` },
+    { subPath: `view/${encodeURIComponent(url)}` }, // an older, percent-encoded link
     {
       rpc: {
         briefing_html: () => ({
@@ -323,4 +322,16 @@ test("shows a briefing in the page and relays its links to BB's opener", async (
   fireEvent.click(view.getByRole("button", { name: "Pull request" }));
   expect(JSON.stringify(view.inspection.navigateCalls)).toContain(url);
   view.lifecycle.unmount();
+});
+
+test("round-trips viewer routes, including ones BB re-encoded", async () => {
+  const { viewerSubPath, viewerUrl } = await import("../app");
+  const route = viewerSubPath(url);
+  expect(route).toMatch(/^view\/[A-Za-z0-9_-]+$/);
+  expect(viewerUrl(route)).toBe(url);
+  expect(viewerUrl(encodeURI(route))).toBe(url);
+  expect(viewerUrl(`view/${encodeURIComponent(url)}`)).toBe(url);
+  expect(viewerUrl(`view/${encodeURIComponent(encodeURIComponent(url))}`)).toBe(url);
+  expect(viewerUrl("view/not-a-url")).toBeNull();
+  expect(viewerUrl("")).toBeNull();
 });
