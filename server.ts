@@ -255,6 +255,8 @@ export default function plugin(bb: BbPluginApi) {
             result.generatedAt,
             job.url,
           );
+          // A new briefing has new claims: its checklist starts fresh.
+          db.prepare("DELETE FROM checklist WHERE url=?").run(job.url);
         } catch (error) {
           if (signal.aborted) {
             db.prepare(

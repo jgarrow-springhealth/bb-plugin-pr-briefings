@@ -68,7 +68,7 @@ Reports are static HTML laid out as one card, the same layout the chat view uses
   - *In the code:* one to three hunks the model picked, each with a "What to notice" caption. PR Briefings finds each one in the diff by an exact line.
   - *On screen:* screenshots attached to the PR description or its comments, side by side when they're labeled Before and After. Changed image files appear here too. Screen recordings are linked, not embedded.
 - **Impact & flow:** an Excalidraw-style ("sketch") diagram of what the change touches. Select a box to jump to that part's card. Each flow is drawn as sketched steps with a numbered explanation.
-- **Verified:** what PR Briefings checked itself (quoted citations, CI) versus what is only the model's claim, plus anything that needs a person. The model's claims and the "needs you" items are a checklist you tick off while reviewing. Ticks are saved in the plugin's database for that PR head and cleared when the PR gets new commits. Ticks only save in the in-app viewer, not in **Open as file**.
+- **Verified:** what PR Briefings checked itself (quoted citations, CI) versus what is only the model's claim, plus anything that needs a person. The model's claims and the "needs you" items are a checklist you tick off while reviewing. Ticks are saved in the plugin's database and cleared whenever the briefing is regenerated, because a new briefing comes with newly written claims. Ticks only save in the in-app viewer, not in **Open as file**.
 - **Risks:** the model's spots worth a closer look, grouped by severity. Each says how to check it and where to look. These are not confirmed bugs.
 - **Evidence:** numbered sources with their match status, the code at the cited lines, the scope boundaries, and the generation snapshot.
 

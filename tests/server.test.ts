@@ -152,6 +152,12 @@ test("queues and completes a briefing independently of Pair Review", async () =>
       genuiAvailable: true,
     });
 
+    await host.harness.behavior.callRpc("checklist_set", {
+      url,
+      head: pr.headSha,
+      key: "claim-abc1",
+      checked: true,
+    });
     const queued = await host.harness.behavior.callRpc("briefing_generate", {
       url,
     });
@@ -179,6 +185,10 @@ test("queues and completes a briefing independently of Pair Review", async () =>
     expect(
       ((await host.harness.behavior.callRpc("snapshot", null)) as any).briefings[0],
     ).toMatchObject({ bundle: "/Users/example/.pr-briefings/briefs/report.genui" });
+    // The finished briefing starts with a fresh checklist.
+    await expect(
+      host.harness.behavior.callRpc("checklist_get", { url, head: pr.headSha }),
+    ).resolves.toEqual({ keys: [] });
     expect(
       host.harness.inspection.experimental_hostRpcCalls.find(
         (call) => call.method === "generate",

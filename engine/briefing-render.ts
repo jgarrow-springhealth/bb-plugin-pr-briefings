@@ -488,7 +488,7 @@ function verified(rows: AcceptanceRow[], checks: CheckRun[] | null, references: 
 ${needs.length ? `<h3 class="sec" id="v-needs">Needs you</h3><p class="muted">Only a person can confirm these, for example by trying the change in the running app.</p><ul class="todo">${todo(needs, "need")}</ul>` : ""}
 <h3 class="sec" id="v-claims">Claims to confirm while you review</h3>${
     claims.length
-      ? `<p class="muted">The AI says these stay true, but nothing checked them. Tick each one off once the diff convinces you. Your ticks are saved with this version of the PR and reset when it gets new commits.</p><ul class="todo">${todo(claims, "claim")}</ul>`
+      ? `<p class="muted">The AI says these stay true, but nothing checked them. Tick each one off once the diff convinces you. Your ticks are saved with this briefing and clear when it's regenerated.</p><ul class="todo">${todo(claims, "claim")}</ul>`
       : `<p class="muted">The AI made no claims that need confirming.</p>`
   }
 ${checksSection(checks)}`;

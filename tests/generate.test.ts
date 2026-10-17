@@ -308,7 +308,7 @@ test("gives each checklist item a stable key and a live progress line", () => {
   const html = renderBriefingHtml({ pr, generationId: "g", model: "m", document });
   expect(html).toMatch(/<input type="checkbox" id="claim-0" data-check="claim-[a-z0-9]+">/);
   expect(html).toContain('<span data-progress="claim">0 of 1 confirmed</span>');
-  expect(html).toContain("Your ticks are saved with this version of the PR");
+  expect(html).toContain("Your ticks are saved with this briefing and clear when it's regenerated.");
   const again = renderBriefingHtml({ pr, generationId: "g2", model: "m", document });
   expect(again.match(/data-check="(claim-[a-z0-9]+)"/)![1]).toBe(html.match(/data-check="(claim-[a-z0-9]+)"/)![1]);
 });
