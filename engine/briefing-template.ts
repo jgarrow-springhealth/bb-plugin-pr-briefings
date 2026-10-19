@@ -89,9 +89,12 @@ export const BriefingDocument = z
     behavior: z
       .object({
         before: Copy(1200),
-        beforeEvidence: EvidenceList.min(1).max(4),
+        // Either side may be empty: a PR that only adds files has no "before"
+        // code to cite (and one that only deletes has no "after"). The
+        // comparison as a whole must still cite something.
+        beforeEvidence: EvidenceList.max(4),
         after: Copy(1200),
-        afterEvidence: EvidenceList.min(1).max(4),
+        afterEvidence: EvidenceList.max(4),
         /** Hunks that best show the change, located in the diff by an exact line. */
         examples: z
           .array(
@@ -106,7 +109,11 @@ export const BriefingDocument = z
           .max(3)
           .optional(),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (behavior) => behavior.beforeEvidence.length + behavior.afterEvidence.length > 0,
+        { message: "The behavior comparison must cite evidence for before or after", path: ["afterEvidence"] },
+      ),
     impacts: z
       .array(Impact)
       .min(1)

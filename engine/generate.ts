@@ -369,7 +369,9 @@ Every evidence entry should include "quote": a short exact excerpt (at most 120
 characters) copied from the cited line. The coordinator checks each quote
 against the real files and re-anchors the line, so copy the text exactly and
 keep it to one line. Before-evidence describes the base commit; all other
-evidence describes the briefed head.
+evidence describes the briefed head. When the PR only adds new files, there is
+no earlier code to cite: describe what was missing in "before" and leave
+"beforeEvidence" empty (likewise "afterEvidence" for a PR that only deletes).
 
 Every impact needs all of its fields, including "changed" (true only for the
 one part this PR changes directly, false for the rest) and "change" (what this

@@ -312,3 +312,19 @@ test("gives each checklist item a stable key and a live progress line", () => {
   const again = renderBriefingHtml({ pr, generationId: "g2", model: "m", document });
   expect(again.match(/data-check="(claim-[a-z0-9]+)"/)![1]).toBe(html.match(/data-check="(claim-[a-z0-9]+)"/)![1]);
 });
+
+test("accepts an additive PR with no before-evidence but not a comparison with none at all", () => {
+  const additive = structuredClone(document) as any;
+  additive.behavior.before = "There was no seeding task.";
+  additive.behavior.beforeEvidence = [];
+  expect(parseBriefingDocument(JSON.stringify(additive)).behavior.beforeEvidence).toEqual([]);
+  additive.behavior.afterEvidence = [];
+  expect(() => parseBriefingDocument(JSON.stringify(additive))).toThrow("must cite evidence for before or after");
+  const html = renderBriefingHtml({ pr, generationId: "g", model: "m", document: { ...document, behavior: { ...document.behavior, beforeEvidence: [] } } });
+  expect(html).toContain("Before this PR");
+  expect(html).toContain("Evidence for this comparison");
+});
+
+test("tells the model how to handle PRs that only add or delete files", () => {
+  expect(briefingPrompt(pr, "g", "diff")).toMatch(/only adds new files[\s\S]*leave\s+"beforeEvidence" empty/);
+});
