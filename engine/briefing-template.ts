@@ -24,8 +24,7 @@ const Evidence = z
     /** Exact text from the cited line, used to verify and re-anchor the citation. */
     quote: Copy(200).optional(),
     note: Copy(300),
-  })
-  .strict();
+  });
 export type EvidenceItem = z.infer<typeof Evidence>;
 const EvidenceList = z.array(Evidence).max(8);
 const ImpactId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
@@ -49,8 +48,7 @@ const Impact = z
     changed: z.boolean(),
     change: Copy(360),
     evidence: EvidenceList,
-  })
-  .strict();
+  });
 const Flow = z
   .object({
     title: Copy(160),
@@ -61,16 +59,14 @@ const Flow = z
             label: Copy(100),
             detail: Copy(260),
             changed: z.boolean(),
-          })
-          .strict(),
+          }),
       )
       .min(2)
       .max(8)
       .refine((steps) => steps.filter((step) => step.changed).length <= 1, {
         message: "A flow can mark at most one changed step",
       }),
-  })
-  .strict();
+  });
 export const BriefingDocument = z
   .object({
     verdict: Copy(320),
@@ -80,11 +76,11 @@ export const BriefingDocument = z
           .object({
             kind: z.enum(["behavior", "surface", "scope", "compatibility"]),
             claim: Copy(500),
-            evidence: EvidenceList.min(1).max(4),
-          })
-          .strict(),
+            // A claim about absence ("no API changes") may have nothing to cite.
+            evidence: EvidenceList.max(4),
+          }),
       )
-      .min(3)
+      .min(1)
       .max(6),
     behavior: z
       .object({
@@ -103,20 +99,17 @@ export const BriefingDocument = z
                 path: RepositoryPath,
                 quote: Copy(200),
                 caption: Copy(240),
-              })
-              .strict(),
+              }),
           )
           .max(3)
           .optional(),
       })
-      .strict()
       .refine(
         (behavior) => behavior.beforeEvidence.length + behavior.afterEvidence.length > 0,
         { message: "The behavior comparison must cite evidence for before or after", path: ["afterEvidence"] },
       ),
     impacts: z
       .array(Impact)
-      .min(1)
       .max(12)
       .refine((items) => items.filter((item) => item.changed).length <= 1, {
         message: "An impact map can mark at most one changed item",
@@ -124,11 +117,10 @@ export const BriefingDocument = z
     flows: z.array(Flow).max(3),
     boundaries: z
       .object({
-        inScope: z.array(Copy(400)).min(1).max(10),
-        outOfScope: z.array(Copy(400)).min(1).max(10),
-        unchanged: z.array(Copy(400)).min(1).max(10),
-      })
-      .strict(),
+        inScope: z.array(Copy(400)).max(10),
+        outOfScope: z.array(Copy(400)).max(10),
+        unchanged: z.array(Copy(400)).max(10),
+      }),
     considerations: z
       .array(
         z
@@ -139,13 +131,159 @@ export const BriefingDocument = z
             /** What a reviewer can do to confirm or rule this out. */
             check: Copy(300).optional(),
             evidence: EvidenceList,
-          })
-          .strict(),
+          }),
       )
       .max(8),
-  })
-  .strict();
+  });
 export type BriefingDocument = z.infer<typeof BriefingDocument>;
+
+// ── Normalizing model output ────────────────────────────────────────────────
+// The model's output is validated strictly for safety (paths, control
+// characters, types) but leniently for presentation: ordinary variation that a
+// legitimate PR or model can produce is normalized here instead of failing the
+// whole briefing. See tests/pr-shapes.test.ts for the cases this covers.
+
+type Json = Record<string, unknown>;
+const isRecord = (value: unknown): value is Json => !!value && typeof value === "object" && !Array.isArray(value);
+const truncate = (value: unknown, max: number) =>
+  typeof value === "string" && value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value;
+const SUMMARY_KINDS = ["behavior", "surface", "scope", "compatibility"] as const;
+const IMPACT_KINDS = ["product surface", "service", "package", "data", "team", "operations"] as const;
+const LEVELS = ["note", "watch", "risk"] as const;
+
+function summaryKind(value: unknown) {
+  const text = String(value ?? "").toLowerCase();
+  if ((SUMMARY_KINDS as readonly string[]).includes(text)) return text;
+  if (/compat/.test(text)) return "compatibility";
+  if (/scope|boundar/.test(text)) return "scope";
+  if (/surface|ui|ux|api|screen|page/.test(text)) return "surface";
+  return "behavior";
+}
+function impactKind(value: unknown) {
+  const text = String(value ?? "").toLowerCase();
+  if ((IMPACT_KINDS as readonly string[]).includes(text)) return text;
+  if (/data|database|schema|db|storage|migration|table/.test(text)) return "data";
+  if (/service|api|backend|server|endpoint|worker|job/.test(text)) return "service";
+  if (/package|library|lib|module|dependency|sdk|component/.test(text)) return "package";
+  if (/team|people|owner|docs|documentation/.test(text)) return "team";
+  if (/ops|operation|infra|deploy|ci|build|test|monitor/.test(text)) return "operations";
+  return "product surface";
+}
+function level(value: unknown) {
+  const text = String(value ?? "").toLowerCase();
+  if ((LEVELS as readonly string[]).includes(text)) return text;
+  if (/high|critical|major|severe|blocker|danger/.test(text)) return "risk";
+  if (/low|minor|info|trivial|nit/.test(text)) return "note";
+  return "watch";
+}
+export function slugId(value: unknown) {
+  const slug = String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+  return slug || undefined;
+}
+function line(value: unknown) {
+  const number = typeof value === "string" ? Number.parseInt(value, 10) : value;
+  return typeof number === "number" && Number.isInteger(number) && number > 0 && number <= 10_000_000 ? number : undefined;
+}
+function optionalText(record: Json, key: string, max: number) {
+  if (typeof record[key] === "string" && (record[key] as string).trim()) record[key] = truncate(record[key], max);
+  else delete record[key];
+}
+function evidenceItems(items: unknown) {
+  if (!Array.isArray(items)) return items;
+  return items.map((item) => {
+    if (!isRecord(item)) return item;
+    const record = { ...item };
+    const at = line(record.line);
+    if (at === undefined) delete record.line;
+    else record.line = at;
+    optionalText(record, "quote", 200);
+    record.note = typeof record.note === "string" && record.note.trim() ? truncate(record.note, 300) : "Cited by the briefing";
+    return record;
+  });
+}
+/** Trims a list to `max`, validating evidence in the discarded entries first. */
+function capped(items: unknown[], max: number, evidenceKey?: string): unknown[] {
+  if (evidenceKey)
+    for (const dropped of items.slice(max))
+      if (isRecord(dropped) && Array.isArray(dropped[evidenceKey])) z.array(Evidence).parse(evidenceItems(dropped[evidenceKey]));
+  return items.slice(0, max);
+}
+const textList = (items: unknown, max: number, length: number) =>
+  Array.isArray(items) ? items.filter((item) => typeof item === "string" && item.trim()).slice(0, max).map((item) => truncate(item, length)) : items;
+
+export function normalizeModelOutput(value: unknown) {
+  if (!isRecord(value)) return value;
+  const document: Json = { ...value, verdict: truncate(value.verdict, 320) };
+  if (Array.isArray(value.summary))
+    document.summary = capped(value.summary, 6, "evidence").map((item) =>
+      isRecord(item) ? { ...item, kind: summaryKind(item.kind), claim: truncate(item.claim, 500), evidence: evidenceItems(item.evidence ?? []) } : item,
+    );
+  if (isRecord(value.behavior)) {
+    const behavior: Json = {
+      ...value.behavior,
+      before: truncate(value.behavior.before, 1200),
+      after: truncate(value.behavior.after, 1200),
+      beforeEvidence: evidenceItems(value.behavior.beforeEvidence ?? []),
+      afterEvidence: evidenceItems(value.behavior.afterEvidence ?? []),
+    };
+    if (Array.isArray(value.behavior.examples))
+      behavior.examples = value.behavior.examples
+        .filter((example) => isRecord(example) && typeof example.path === "string" && typeof example.quote === "string" && example.quote.trim() && typeof example.caption === "string" && example.caption.trim())
+        .slice(0, 3)
+        .map((example) => ({ ...(example as Json), quote: truncate((example as Json).quote, 200), caption: truncate((example as Json).caption, 240) }));
+    else delete behavior.examples;
+    document.behavior = behavior;
+  }
+  if (Array.isArray(value.impacts))
+    document.impacts = capped(value.impacts, 12, "evidence").map((item) => {
+      if (!isRecord(item)) return item;
+      const record: Json = { ...item, kind: impactKind(item.kind), name: truncate(item.name, 120), evidence: evidenceItems(item.evidence ?? []) };
+      const id = slugId(item.id);
+      if (id) record.id = id;
+      else delete record.id;
+      if (Array.isArray(item.dependsOn)) {
+        const deps = [...new Set(item.dependsOn.map(slugId).filter((dep): dep is string => !!dep && dep !== id))].slice(0, 12);
+        record.dependsOn = deps;
+      } else delete record.dependsOn;
+      optionalText(record, "relation", 60);
+      if (typeof record.change === "string") record.change = truncate(record.change, 360);
+      return record;
+    });
+  if (Array.isArray(value.flows))
+    document.flows = value.flows
+      .filter((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.length >= 2)
+      .slice(0, 3)
+      .map((flow) => {
+        const record = flow as Json;
+        return {
+          ...record,
+          title: truncate(record.title, 160),
+          steps: (record.steps as unknown[]).slice(0, 8).map((step) =>
+            isRecord(step) ? { ...step, label: truncate(step.label, 100), detail: truncate(step.detail, 260), changed: step.changed === true } : step,
+          ),
+        };
+      });
+  if (isRecord(value.boundaries))
+    document.boundaries = {
+      ...value.boundaries,
+      inScope: textList(value.boundaries.inScope ?? [], 10, 400),
+      outOfScope: textList(value.boundaries.outOfScope ?? [], 10, 400),
+      unchanged: textList(value.boundaries.unchanged ?? [], 10, 400),
+    };
+  if (Array.isArray(value.considerations))
+    document.considerations = capped(value.considerations, 8, "evidence").map((item) => {
+      if (!isRecord(item)) return item;
+      const record: Json = { ...item, level: level(item.level), title: truncate(item.title, 140), detail: truncate(item.detail, 700), evidence: evidenceItems(item.evidence ?? []) };
+      optionalText(record, "check", 300);
+      return record;
+    });
+  return document;
+}
 
 function trimValidatedEvidence(value: unknown, maximum: number) {
   if (!Array.isArray(value)) return value;
@@ -278,7 +416,7 @@ export function parseBriefingDocument(output: string): BriefingDocument {
   } catch {
     throw Error("Briefing model returned invalid JSON");
   }
-  return BriefingDocument.parse(normalizeEvidenceCardinality(value));
+  return BriefingDocument.parse(normalizeEvidenceCardinality(normalizeModelOutput(value)));
 }
 
 export { renderBriefingHtml } from "./briefing-render.ts";

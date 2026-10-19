@@ -835,6 +835,9 @@ export function acceptanceRows(options: {
       needs: changed ? "Compare the before/after images" : null,
     });
   }
+  // Summary points the model gave no source for are claims to confirm, too.
+  for (const point of options.document.summary.filter((item) => !item.evidence.length).slice(0, 5))
+    rows.push({ name: point.claim, status: "claimed", by: "model", note: "The model cited no code for this summary point.", needs: null });
   for (const invariant of options.document.boundaries.unchanged.slice(0, 5))
     rows.push({ name: invariant, status: "claimed", by: "model", note: "Stated by the briefing model; not independently checked.", needs: null });
   return rows;

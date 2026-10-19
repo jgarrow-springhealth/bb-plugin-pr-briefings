@@ -670,7 +670,7 @@ ${STYLE}
 <p><b>${esc(`${pr.owner}/${pr.repo}`)}</b> · by ${esc(pr.author)} · base <code>${pr.baseSha.slice(0, 7)}</code> → head <code>${pr.headSha.slice(0, 7)}</code> · briefed by ${esc(model)}</p>
 <p>${esc(document.verdict)}</p>
 <div class="metrics">${metrics}</div>
-<div class="callout">${icon("info")}<div><b>Remember this</b>${esc(document.boundaries.unchanged[0]!)}</div></div>
+${document.boundaries.unchanged[0] ? `<div class="callout">${icon("info")}<div><b>Remember this</b>${esc(document.boundaries.unchanged[0])}</div></div>` : ""}
 <div class="tabs">
 ${TABS.map((_, index) => `<input class="tab-input" type="radio" name="tabs" id="tab-${index + 1}"${index ? "" : " checked"}>`).join("")}
 <nav class="tabbar" aria-label="Briefing sections">${TABS.map((label, index) => `<label for="tab-${index + 1}">${esc(label)}</label>`).join("")}</nav>

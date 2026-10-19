@@ -71,7 +71,7 @@ Card(b.meta.heading, [
   Text(b.meta.byline),
   Text(b.verdict),
   Row(b.metrics.map(m => Metric(m.label, m.value, note: m.note, tone: m.tone))),
-  Callout(b.remember, tone: "info", title: "Remember this"),
+  b.remember ? Callout(b.remember, tone: "info", title: "Remember this") : null,
   Tabs(["Overview", "Before / after", "Impact & flow", "Verified", "Risks", "Evidence"], [
     Stack([
       List(b.summary.map(s => ({title: s.title, detail: s.detail, icon: s.icon, value: Badge(s.kind, tone: s.tone)}))),
@@ -201,7 +201,7 @@ export function buildGenuiBundle(options: {
       headSha: pr.headSha,
     },
     verdict: escapeMarkdown(document.verdict),
-    remember: escapeMarkdown(document.boundaries.unchanged[0]!),
+    remember: document.boundaries.unchanged[0] ? escapeMarkdown(document.boundaries.unchanged[0]) : null,
     metrics: [
       { label: "Files", value: String(facts.files.length || pr.changedFiles || 0), note: "changed", tone: "neutral" },
       { label: "Lines", value: `+${facts.files.length ? added : (pr.additions ?? 0)} −${facts.files.length ? removed : (pr.deletions ?? 0)}`, note: "added / removed", tone: "neutral" },

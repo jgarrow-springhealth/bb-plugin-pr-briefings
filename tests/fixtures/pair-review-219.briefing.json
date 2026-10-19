@@ -1,0 +1,541 @@
+{
+ "source": "Validated model output saved by PR Briefings for a public PR, in-the-loop-labs/pair-review#219 (head 3158f99). Used as a regression fixture: schema changes must keep accepting known-good output.",
+ "version": 1,
+ "generationId": "5f549cf6-f9b3-4487-ad6d-aa82d033c33f",
+ "model": "pi:openai/gpt-5",
+ "pr": {
+  "key": "github.com/in-the-loop-labs/pair-review#219",
+  "url": "https://github.com/in-the-loop-labs/pair-review/pull/219",
+  "host": "github.com",
+  "owner": "in-the-loop-labs",
+  "repo": "pair-review",
+  "number": 219,
+  "title": "Consolidate duplicated SVG icons into shared icons.js module",
+  "author": "tjwp",
+  "baseBranch": "main",
+  "baseSha": "e14482a62825a8c0ac8105143fd923603040a3a6",
+  "headBranch": "discussion-icon",
+  "headSha": "3158f99a20b36a65e84e5b68e66410bc521f21d1",
+  "updatedAt": "2026-02-23T01:47:23Z",
+  "draft": false,
+  "requestKinds": [],
+  "changedFiles": 34,
+  "additions": 801,
+  "deletions": 529
+ },
+ "document": {
+  "verdict": "This PR centralizes all duplicated inline SVGs into a single shared icons.js module and switches consumers to a small window.Icons.icon() helper without changing UI intent.",
+  "summary": [
+   {
+    "kind": "behavior",
+    "claim": "Introduces a shared SVG icon registry and icon(name, \u2026) helper, then replaces many inline SVGs with window.Icons.icon(...) calls.",
+    "evidence": [
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 1,
+      "quote": "* Shared SVG icon registry and helper.",
+      "note": "New shared module for icons"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 336,
+      "quote": "window.Icons = { icon, DEFS: ICON_DEFS };",
+      "note": "Exports global API window.Icons.icon"
+     },
+     {
+      "path": "public/js/components/AIPanel.js",
+      "line": 96,
+      "quote": "this.filterToggleBtn.innerHTML = window.Icons.icon('eye', 14, 14);",
+      "note": "Consumer now calls helper"
+     },
+     {
+      "path": "public/pr.html",
+      "line": 327,
+      "quote": "<script src=\"/js/utils/icons.js\"></script>",
+      "note": "Icons script is loaded on PR page"
+     }
+    ]
+   },
+   {
+    "kind": "surface",
+    "claim": "Affects multiple UI surfaces including AIPanel, ChatPanel, SuggestionManager, DiffRenderer, PRManager, and modals by swapping inline SVG strings for helper invocations.",
+    "evidence": [
+     {
+      "path": "public/js/components/ChatPanel.js",
+      "line": 51,
+      "quote": "${window.Icons.icon('discussion', 14, 14)}",
+      "note": "ChatPanel header icon uses shared icon"
+     },
+     {
+      "path": "public/js/modules/suggestion-manager.js",
+      "line": 524,
+      "quote": "${window.Icons.icon('discussion', 14, 14)}",
+      "note": "SuggestionManager uses shared discussion icon"
+     },
+     {
+      "path": "public/js/modules/diff-renderer.js",
+      "line": 265,
+      "quote": "chatButton.innerHTML = window.Icons.icon('discussion', 14, 14);",
+      "note": "DiffRenderer swaps inline SVG for helper"
+     },
+     {
+      "path": "public/js/pr.js",
+      "line": 60,
+      "quote": "return window.Icons?.icon('eye') || '';",
+      "note": "PRManager references Icons for eye icon"
+     }
+    ]
+   },
+   {
+    "kind": "scope",
+    "claim": "Limits changes to icon rendering strings; controls, titles, and aria-labels continue to be set as before.",
+    "evidence": [
+     {
+      "path": "public/js/components/AIPanel.js",
+      "line": 104,
+      "quote": "this.filterToggleBtn.setAttribute('aria-label', this.filterToggleBtn.title);",
+      "note": "Accessibility label update remains"
+     },
+     {
+      "path": "public/js/components/ChatPanel.js",
+      "line": 74,
+      "quote": "<p>Ask questions about this review, or the changes</p>",
+      "note": "UI copy unchanged; only icon markup changed"
+     },
+     {
+      "path": "public/js/modules/file-comment-manager.js",
+      "line": 192,
+      "quote": "<label>Add file-level comment</label>",
+      "note": "Control labeling unchanged"
+     }
+    ]
+   },
+   {
+    "kind": "compatibility",
+    "claim": "Test suite is updated to load or stub window.Icons, and unknown icon names return an empty string.",
+    "evidence": [
+     {
+      "path": "tests/unit/chat-panel.test.js",
+      "line": 188,
+      "quote": "require('../../public/js/utils/icons.js');",
+      "note": "Unit tests load the new module"
+     },
+     {
+      "path": "tests/unit/icons.test.js",
+      "line": 106,
+      "quote": "expect(icon('nonexistent')).toBe('');",
+      "note": "Behavior for unknown icon key is defined"
+     },
+     {
+      "path": "tests/unit/council-progress-modal.test.js",
+      "line": 41,
+      "quote": "Icons: { icon: () => '<svg></svg>', DEFS: {} },",
+      "note": "Some tests stub window.Icons"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 314,
+      "quote": "if (!def) return '';",
+      "note": "Helper returns empty string for unknown names"
+     }
+    ]
+   }
+  ],
+  "behavior": {
+   "before": "Each component and module embedded duplicated inline SVG strings or per-file constants (e.g., static ICONS in AIPanel) and set innerHTML to those strings.",
+   "beforeEvidence": [
+    {
+     "path": "public/js/components/AIPanel.js",
+     "line": 10,
+     "quote": "static ICONS = {",
+     "note": "Per-component inline icon constants existed"
+    },
+    {
+     "path": "public/js/components/AIPanel.js",
+     "line": 115,
+     "quote": "this.filterToggleBtn.innerHTML = AIPanel.ICONS.eye;",
+     "note": "Inline constant used at render time"
+    },
+    {
+     "path": "public/js/components/ChatPanel.js",
+     "line": 6,
+     "quote": "const DISMISS_ICON = `<svg viewBox=\"0 0 16 16\"",
+     "note": "Another per-file inline SVG"
+    },
+    {
+     "path": "public/js/modules/diff-renderer.js",
+     "line": 9,
+     "quote": "static CHEVRON_RIGHT_ICON = `",
+     "note": "Utility class held inline SVG strings"
+    }
+   ],
+   "after": "A new shared module defines an icon registry and a window.Icons.icon(name, \u2026) helper. Pages load icons.js, and components call Icons.icon to render SVGs with optional size/class options.",
+   "afterEvidence": [
+    {
+     "path": "public/js/utils/icons.js",
+     "line": 336,
+     "quote": "window.Icons = { icon, DEFS: ICON_DEFS };",
+     "note": "Global Icons API exported"
+    },
+    {
+     "path": "public/pr.html",
+     "line": 327,
+     "quote": "<script src=\"/js/utils/icons.js\"></script>",
+     "note": "Icons module loaded on PR page"
+    },
+    {
+     "path": "public/js/components/AIPanel.js",
+     "line": 96,
+     "quote": "this.filterToggleBtn.innerHTML = window.Icons.icon('eye', 14, 14);",
+     "note": "Consumer switched to helper"
+    },
+    {
+     "path": "public/js/modules/diff-renderer.js",
+     "line": 265,
+     "quote": "chatButton.innerHTML = window.Icons.icon('discussion', 14, 14);",
+     "note": "Another consumer switched to helper"
+    }
+   ],
+   "examples": [
+    {
+     "path": "public/js/components/AIPanel.js",
+     "quote": "-    static ICONS = {",
+     "caption": "Removes duplicated per-component icon constants"
+    },
+    {
+     "path": "public/js/components/AIPanel.js",
+     "quote": "+            this.filterToggleBtn.innerHTML = window.Icons.icon('eye', 14, 14);",
+     "caption": "Renders the same eye icon via the shared helper"
+    },
+    {
+     "path": "public/pr.html",
+     "quote": "+    <script src=\"/js/utils/icons.js\"></script>",
+     "caption": "Adds the new shared registry to page boot"
+    }
+   ]
+  },
+  "impacts": [
+   {
+    "id": "icons-module",
+    "dependsOn": [],
+    "relation": "exports Icons.icon()",
+    "name": "Shared icons registry (public/js/utils/icons.js)",
+    "kind": "package",
+    "changed": true,
+    "change": "Adds ICON_DEFS and icon(name, width?, height? | opts) API, exporting window.Icons and supporting stroke/fill variants and size/class overrides.",
+    "evidence": [
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 1,
+      "quote": "* Shared SVG icon registry and helper.",
+      "note": "Intent of the module"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 25,
+      "quote": "discussion: {",
+      "note": "Registry entries keyed by name"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 200,
+      "quote": "logo: {",
+      "note": "Example of stroke-based icon entry"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 336,
+      "quote": "window.Icons = { icon, DEFS: ICON_DEFS };",
+      "note": "Global export used by consumers"
+     }
+    ]
+   },
+   {
+    "id": "page-scripts",
+    "dependsOn": [
+     "icons-module"
+    ],
+    "relation": "loads the script",
+    "name": "PR and Local pages (public/pr.html, public/local.html)",
+    "kind": "product surface",
+    "changed": false,
+    "change": "Ensure the icons.js script is loaded so components can call window.Icons.icon(...) at runtime.",
+    "evidence": [
+     {
+      "path": "public/pr.html",
+      "line": 327,
+      "quote": "<script src=\"/js/utils/icons.js\"></script>",
+      "note": "PR page loads icons module"
+     },
+     {
+      "path": "public/local.html",
+      "line": 503,
+      "quote": "<script src=\"/js/utils/icons.js\"></script>",
+      "note": "Local page loads icons module"
+     }
+    ]
+   },
+   {
+    "id": "aipanel-consumer",
+    "dependsOn": [
+     "icons-module"
+    ],
+    "relation": "calls Icons.icon()",
+    "name": "AIPanel component",
+    "kind": "product surface",
+    "changed": false,
+    "change": "Replaces inline constants and SVG strings with Icons.icon('eye'|'eyeClosed'|...), reducing duplication.",
+    "evidence": [
+     {
+      "path": "public/js/components/AIPanel.js",
+      "line": 115,
+      "quote": "this.filterToggleBtn.innerHTML = AIPanel.ICONS.eye;",
+      "note": "Was inline constant (before)"
+     },
+     {
+      "path": "public/js/components/AIPanel.js",
+      "line": 96,
+      "quote": "this.filterToggleBtn.innerHTML = window.Icons.icon('eye', 14, 14);",
+      "note": "Now calls shared helper"
+     }
+    ]
+   },
+   {
+    "id": "diff-consumer",
+    "dependsOn": [
+     "icons-module"
+    ],
+    "relation": "calls Icons.icon()",
+    "name": "DiffRenderer module",
+    "kind": "product surface",
+    "changed": false,
+    "change": "Drops static SVG constants (chevrons) in favor of Icons.icon('chevronRight'|'chevronDown').",
+    "evidence": [
+     {
+      "path": "public/js/modules/diff-renderer.js",
+      "line": 6,
+      "quote": "class DiffRenderer {",
+      "note": "Module updated"
+     },
+     {
+      "path": "public/js/modules/diff-renderer.js",
+      "line": 389,
+      "quote": "chevronBtn.innerHTML = isExpanded ? window.Icons.icon('chevronDown')",
+      "note": "Chevron now via Icons"
+     }
+    ]
+   },
+   {
+    "id": "prmanager-consumer",
+    "dependsOn": [
+     "icons-module"
+    ],
+    "relation": "calls Icons.icon()",
+    "name": "PRManager theme and eye icons",
+    "kind": "product surface",
+    "changed": false,
+    "change": "Switches icon getters and theme toggle icons to use Icons.icon('eye'|'eyeClosed'|'sun'|'moon').",
+    "evidence": [
+     {
+      "path": "public/js/pr.js",
+      "line": 57,
+      "quote": "return window.Icons?.icon('eye') || '';",
+      "note": "Getter uses Icons"
+     },
+     {
+      "path": "public/js/pr.js",
+      "line": 3392,
+      "quote": "window.Icons.icon('sun') :",
+      "note": "Theme toggle sun"
+     },
+     {
+      "path": "public/js/pr.js",
+      "line": 3393,
+      "quote": "window.Icons.icon('moon');",
+      "note": "Theme toggle moon"
+     }
+    ]
+   },
+   {
+    "id": "tests-compat",
+    "dependsOn": [
+     "icons-module"
+    ],
+    "relation": "requires Icons in tests",
+    "name": "Unit tests",
+    "kind": "operations",
+    "changed": false,
+    "change": "Update tests to require icons.js or stub window.Icons so components render during test runs.",
+    "evidence": [
+     {
+      "path": "tests/unit/chat-panel.test.js",
+      "line": 188,
+      "quote": "require('../../public/js/utils/icons.js');",
+      "note": "Loads shared icons in tests"
+     },
+     {
+      "path": "tests/unit/council-progress-modal.test.js",
+      "line": 41,
+      "quote": "Icons: { icon: () => '<svg></svg>', DEFS: {} },",
+      "note": "Stubs window.Icons in test env"
+     },
+     {
+      "path": "tests/unit/icons.test.js",
+      "line": 1,
+      "quote": "describe('Icons module', () => {",
+      "note": "New unit tests cover Icons"
+     }
+    ]
+   }
+  ],
+  "flows": [
+   {
+    "title": "AIPanel filter toggle updates its eye/eyeClosed icon",
+    "steps": [
+     {
+      "label": "Check current filter state",
+      "detail": "Determines showDismissedComments and sets title/aria-label accordingly.",
+      "changed": false
+     },
+     {
+      "label": "Render appropriate icon",
+      "detail": "Instead of concatenating inline SVG constants, it now calls window.Icons.icon('eye'|'eyeClosed', 14, 14).",
+      "changed": true
+     },
+     {
+      "label": "Apply to button",
+      "detail": "Sets innerHTML and aria-label on filterToggleBtn.",
+      "changed": false
+     }
+    ]
+   },
+   {
+    "title": "Page boot ensures shared icons are available to consumers",
+    "steps": [
+     {
+      "label": "Load shared icons module",
+      "detail": "PR and Local HTML pages include <script src=\"/js/utils/icons.js\"></script> so window.Icons is defined.",
+      "changed": true
+     },
+     {
+      "label": "Initialize components",
+      "detail": "Downstream JS runs (components, modules) and calls window.Icons.icon(...) during render.",
+      "changed": false
+     },
+     {
+      "label": "Icons render with defaults or overrides",
+      "detail": "Helper applies default 16x16 or caller-supplied width/height/className.",
+      "changed": false
+     }
+    ]
+   }
+  ],
+  "boundaries": {
+   "inScope": [
+    "Front-end icon rendering strings across components/modules are refactored to call a shared helper."
+   ],
+   "outOfScope": [
+    "No API contracts, server behavior, or business logic outside icon rendering are changed."
+   ],
+   "unchanged": [
+    "Control semantics, labels, and event handlers (e.g., aria-labels, button titles, click handlers) remain the same."
+   ]
+  },
+  "considerations": [
+   {
+    "level": "watch",
+    "title": "Script load order must provide window.Icons before consumers run",
+    "detail": "If icons.js loads after modules/components execute, window.Icons.icon() calls would fail.",
+    "check": "Open public/pr.html and public/local.html to verify icons.js appears before module scripts that render UI.",
+    "evidence": [
+     {
+      "path": "public/pr.html",
+      "line": 327,
+      "quote": "<script src=\"/js/utils/icons.js\"></script>",
+      "note": "Icons script included on page"
+     }
+    ]
+   },
+   {
+    "level": "note",
+    "title": "Stroke-based vs fill-based icons handled via attrs",
+    "detail": "Some icons (logo, sparkle) require stroke attributes; the registry includes attrs so they render correctly.",
+    "check": "Inspect logo and sparkle renders; ensure stroke color/width apply as expected.",
+    "evidence": [
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 201,
+      "quote": "attrs: 'fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"",
+      "note": "Stroke attrs for logo"
+     },
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 220,
+      "quote": "attrs: 'fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"",
+      "note": "Stroke attrs for sparkle"
+     }
+    ]
+   },
+   {
+    "level": "note",
+    "title": "Default dimensions are 16 unless overridden",
+    "detail": "Helper defaults to 16x16; most callers pass explicit sizes matching prior UI to avoid layout changes.",
+    "check": "Spot-check buttons where size isn't passed to icon(); compare before/after sizes visually.",
+    "evidence": [
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 291,
+      "quote": "let width = 16;",
+      "note": "Default width"
+     },
+     {
+      "path": "public/js/components/AISummaryModal.js",
+      "line": 44,
+      "quote": "${window.Icons.icon('close')}",
+      "note": "Example using default size"
+     }
+    ]
+   },
+   {
+    "level": "risk",
+    "title": "Typos or missing icon names render nothing",
+    "detail": "Unknown icon keys return an empty string, which would remove the icon silently.",
+    "check": "Search for window.Icons.icon('...') calls; ensure names match ICON_DEFS; run icons.test.js for safety.",
+    "evidence": [
+     {
+      "path": "public/js/utils/icons.js",
+      "line": 314,
+      "quote": "if (!def) return '';",
+      "note": "Unknown icon yields ''"
+     },
+     {
+      "path": "tests/unit/icons.test.js",
+      "line": 106,
+      "quote": "expect(icon('nonexistent')).toBe('');",
+      "note": "Test enforces behavior"
+     }
+    ]
+   },
+   {
+    "level": "note",
+    "title": "Tests updated to load or stub window.Icons",
+    "detail": "New dependency requires either requiring icons.js or stubbing window.Icons in tests.",
+    "check": "Run unit tests; verify added requires/stubs; watch for ReferenceError: Icons.",
+    "evidence": [
+     {
+      "path": "tests/unit/chat-panel.test.js",
+      "line": 188,
+      "quote": "require('../../public/js/utils/icons.js');",
+      "note": "Loads module in tests"
+     },
+     {
+      "path": "tests/unit/council-progress-modal.test.js",
+      "line": 41,
+      "quote": "Icons: { icon: () => '<svg></svg>', DEFS: {} },",
+      "note": "Stubs Icons in test env"
+     }
+    ]
+   }
+  ]
+ }
+}

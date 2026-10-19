@@ -173,8 +173,12 @@ test("accepts quote and graph fields and rejects unsafe impact ids", () => {
     { id: "page", dependsOn: ["profile"], name: "Page", kind: "service", changed: false, change: "Uses it", evidence: [{ path: "src/page.ts", line: 3, quote: "profile()", note: "call" }] },
   ];
   expect(parseBriefingDocument(JSON.stringify(withGraph)).impacts[1]).toMatchObject({ id: "page", dependsOn: ["profile"] });
+  // Ids are normalized to safe slugs rather than failing the briefing.
   withGraph.impacts[1].id = 'x"]; click';
-  expect(() => parseBriefingDocument(JSON.stringify(withGraph))).toThrow();
+  withGraph.impacts[1].dependsOn = ["Profile", 'x"]; click'];
+  const slugged = parseBriefingDocument(JSON.stringify(withGraph)).impacts[1]!;
+  expect(slugged.id).toBe("x-click");
+  expect(slugged.dependsOn).toEqual(["profile"]);
 });
 
 test("renders verification, charts, graph, visuals, and base-linked evidence as a safe static report", async () => {

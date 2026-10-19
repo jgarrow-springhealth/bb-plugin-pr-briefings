@@ -148,7 +148,12 @@ npm test
 npm run build
 ```
 
-`npm run build` runs `bb plugin build`. The unit and frontend tests use BB's plugin harness and do not prove live GitHub authentication, provider access, generated-report quality, or host file-preview behavior.
+`npm run build` runs `bb plugin build`.
+
+Model output is validated strictly for safety (repository-relative paths, control characters, types) and leniently for presentation. Ordinary variation is normalized instead of failing the briefing: extra keys, loose labels, long text, PRs that only add or delete files, and tiny PRs. The suite guards this in two places:
+
+- `tests/pr-shapes.test.ts` runs realistic answers for different PR shapes through the whole pipeline: add-only, delete-only, rename-only, docs-only, image-only, a one-line fix, a large PR, messy output, and output that must still fail.
+- `tests/golden.test.ts` re-validates real accepted output kept in `tests/fixtures/`. Add fixtures from public PRs only, using the `<head>.json` that each briefing saves. The unit and frontend tests use BB's plugin harness and do not prove live GitHub authentication, provider access, generated-report quality, or host file-preview behavior.
 
 ## Screenshots
 
