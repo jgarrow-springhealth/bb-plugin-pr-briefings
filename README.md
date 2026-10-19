@@ -31,10 +31,10 @@ Only canonical HTTPS PR URLs on the configured hostname are accepted. Query stri
 
 ## Installation
 
-Install the latest compatible 0.1 release from GitHub:
+Install the latest compatible 0.2 release from GitHub:
 
 ```sh
-bb plugin install 'git:https://github.com/jgarrow-springhealth/bb-plugin-pr-briefings.git@^0.1.0'
+bb plugin install 'git:https://github.com/jgarrow-springhealth/bb-plugin-pr-briefings.git@^0.2.0'
 ```
 
 BB asks for confirmation because third-party plugins run with full trust. Prefer a tagged release or explicit ref when one is available.
@@ -153,14 +153,22 @@ npm run build
 Model output is validated strictly for safety (repository-relative paths, control characters, types) and leniently for presentation. Ordinary variation is normalized instead of failing the briefing: extra keys, loose labels, long text, PRs that only add or delete files, and tiny PRs. The suite guards this in two places:
 
 - `tests/pr-shapes.test.ts` runs realistic answers for different PR shapes through the whole pipeline: add-only, delete-only, rename-only, docs-only, image-only, a one-line fix, a large PR, messy output, and output that must still fail.
-- `tests/golden.test.ts` re-validates real accepted output kept in `tests/fixtures/`. Add fixtures from public PRs only, using the `<head>.json` that each briefing saves. The unit and frontend tests use BB's plugin harness and do not prove live GitHub authentication, provider access, generated-report quality, or host file-preview behavior.
+- `tests/golden.test.ts` re-validates real accepted output kept in `tests/fixtures/`. Add fixtures from public PRs only, using the `<head>.json` that each briefing saves.
+
+The unit and frontend tests use BB's plugin harness. They don't prove live GitHub authentication, provider access, generated-report quality, or how BB's own page hosts the in-app viewer.
 
 ## Screenshots
 
-A report generated from a public pull request leads with the product's primary
-outcome: an evidence-backed explanation of behavior, impact, flows, and scope:
+A briefing for a public pull request. The header shows the verdict, metrics,
+and what stays stable, and the tabs split the briefing into Overview, Before /
+after, Impact & flow, Verified, Risks, and Evidence:
 
-![Generated PR briefing](docs/screenshots/generated-report.png)
+![Generated PR briefing, Overview tab](docs/screenshots/generated-report.png)
+
+The Impact & flow tab draws what the change touches and how it flows as
+Excalidraw-style sketches. Select a box to open that part's details:
+
+![Impact & flow tab with sketch diagrams](docs/screenshots/impact-flow.png)
 
 The queue and generation surface shows request-category controls and filters;
 live counts and pull-request cards are omitted:

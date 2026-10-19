@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-pr-briefings",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Understand a pull request’s behavior, impact, flows, boundaries, and risks before you start reviewing code.",
   "private": true,
   "license": "MIT",
@@ -13,7 +13,13 @@
   "bugs": {
     "url": "https://github.com/jgarrow-springhealth/bb-plugin-pr-briefings/issues"
   },
-  "keywords": ["bb-plugin", "github", "pull-request", "code-review", "briefing"],
+  "keywords": [
+    "bb-plugin",
+    "github",
+    "pull-request",
+    "code-review",
+    "briefing"
+  ],
   "type": "module",
   "engines": {
     "bb": ">=0.45",
